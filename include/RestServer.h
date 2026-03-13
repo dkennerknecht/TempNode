@@ -1,6 +1,7 @@
 #pragma once
 #include <Arduino.h>
 #include <ESPAsyncWebServer.h>
+#include <array>
 
 class LogManager;
 class TimeManager;
@@ -34,6 +35,18 @@ private:
 
   AsyncWebServer* _srv = nullptr;
 
+  // OTA upload state
+  bool _otaRejected = false;
+  bool _otaVersionChecked = false;
+  size_t _otaExpectedBytes = 0;
+  size_t _otaReceivedBytes = 0;
+  size_t _otaHeaderBytes = 0;
+  String _otaRejectReason = "";
+  std::array<uint8_t, 512> _otaHeaderBuf{};
+
   bool authOk(AsyncWebServerRequest* req) const;
+  void resetOtaState();
+  bool otaPrecheck(AsyncWebServerRequest* req, const String& filename);
+  bool otaCheckVersionChunk(const uint8_t* data, size_t len);
   void setupRoutes();
 };

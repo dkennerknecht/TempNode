@@ -31,7 +31,11 @@
     "enabled": true
   },
   "ota": {
-    "enabled": false
+    "enabled": false,
+    "allowInsecureHttp": false,
+    "allowDowngrade": false,
+    "healthConfirmMs": 30000,
+    "requireNetworkForConfirm": true
   },
   "watchdog": {
     "enabled": false,

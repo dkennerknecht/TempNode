@@ -25,6 +25,7 @@ Produktionsnahes PlatformIO-Projekt (Arduino Framework) für das **Waveshare ESP
 - `GET /api/v1/health`
 - `GET /api/v1/metrics`
 - Optional: `POST /api/v1/ota` (wenn `ota.enabled=true`)
+  - OTA wird nur aktiviert, wenn zusätzlich `security.enabled=true`, `security.restToken` gesetzt und `ota.allowInsecureHttp=true` ist.
 
 ## MQTT Topics
 - `device/<deviceId>/temps/<sensorId>` (retained)
@@ -36,6 +37,7 @@ Produktionsnahes PlatformIO-Projekt (Arduino Framework) für das **Waveshare ESP
 - Optional Override via SD: `/config.json`
 - Bei `security.enabled=true` muss REST-Auth konfiguriert sein (`restToken` via `Authorization: Bearer ...` oder `restUser`/`restPass`)
 - Query-Parameter `?token=` wird aus Sicherheitsgründen nicht unterstützt
+- Für OTA gilt: Bearer-Token Pflicht, Versions-Downgrade standardmäßig blockiert (`ota.allowDowngrade=false`)
 
 Siehe `config.example.json`.
 

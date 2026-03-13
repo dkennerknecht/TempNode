@@ -120,7 +120,29 @@ Nach Reboot:
 1. Serielle Logs prüfen (`ETH static IP configured: ...`).
 2. REST unter statischer IP aufrufen.
 
-## 9. Persistenz prüfen
+## 9. OTA-Upload prüfen
+
+Voraussetzungen in `/config.json`:
+- `ota.enabled=true`
+- `ota.allowInsecureHttp=true` (expliziter Opt-in)
+- `security.enabled=true`
+- `security.restToken` gesetzt
+
+Upload-Test:
+```bash
+NODE_IP=192.168.1.50
+TOKEN=<token>
+curl -i -H "Authorization: Bearer $TOKEN" \
+     -F "firmware=@.pio/build/esp32s3/firmware.bin" \
+     "http://$NODE_IP/api/v1/ota"
+```
+
+Erwartung:
+- HTTP 200 mit `{"status":"ok","reboot":true}`
+- Gerät startet neu
+- Bei gleicher/älterer Version wird Upload abgewiesen (wenn `ota.allowDowngrade=false`)
+
+## 10. Persistenz prüfen
 
 1. Mehrere Reboots ausführen.
 2. Prüfen:
@@ -128,7 +150,7 @@ Nach Reboot:
    - `system.resetReason` plausibel.
    - keine wiederkehrenden SD-Schreibfehler.
 
-## 10. Abnahmekriterien
+## 11. Abnahmekriterien
 
 - Build erfolgreich (`pio run`).
 - REST-Endpunkte antworten stabil.

@@ -9,9 +9,173 @@
 #include "MqttClientManager.h"
 #include <ArduinoJson.h>
 #include <Update.h>
+#include <esp_app_desc.h>
+#include <esp_app_format.h>
+#include <esp_ota_ops.h>
+#include <cctype>
+#include <cstring>
 
 static const char* timeSourceStr(uint8_t src) {
   return (src == 0) ? "NTP" : "UPTIME";
+}
+
+static size_t parseVersionParts(const char* s, int* out, size_t maxParts) {
+  size_t count = 0;
+  const char* p = s;
+
+  while (*p && count < maxParts) {
+    while (*p && !isdigit((unsigned char)*p)) p++;
+    if (!*p) break;
+
+    int v = 0;
+    while (*p && isdigit((unsigned char)*p)) {
+      v = (v * 10) + (*p - '0');
+      p++;
+    }
+    out[count++] = v;
+  }
+  return count;
+}
+
+static int compareVersions(const char* a, const char* b) {
+  int pa[8] = {0};
+  int pb[8] = {0};
+
+  size_t ca = parseVersionParts(a, pa, 8);
+  size_t cb = parseVersionParts(b, pb, 8);
+
+  if (ca == 0 || cb == 0) {
+    int c = strcmp(a, b);
+    return (c < 0) ? -1 : ((c > 0) ? 1 : 0);
+  }
+
+  size_t n = (ca > cb) ? ca : cb;
+  for (size_t i = 0; i < n; i++) {
+    int va = (i < ca) ? pa[i] : 0;
+    int vb = (i < cb) ? pb[i] : 0;
+    if (va < vb) return -1;
+    if (va > vb) return 1;
+  }
+  return 0;
+}
+
+void RestServer::resetOtaState() {
+  _otaRejected = false;
+  _otaVersionChecked = false;
+  _otaExpectedBytes = 0;
+  _otaReceivedBytes = 0;
+  _otaHeaderBytes = 0;
+  _otaRejectReason = "";
+  _otaHeaderBuf.fill(0);
+}
+
+bool RestServer::otaPrecheck(AsyncWebServerRequest* req, const String& filename) {
+  if (!_cfg->security.enabled || !_cfg->security.restToken.length()) {
+    _otaRejectReason = "OTA requires security.enabled=true and restToken";
+    return false;
+  }
+  if (!req->hasHeader("Authorization")) {
+    _otaRejectReason = "OTA requires Authorization: Bearer <token>";
+    return false;
+  } else {
+    String auth = req->getHeader("Authorization")->value();
+    if (!auth.startsWith("Bearer ")) {
+      _otaRejectReason = "OTA requires Bearer token auth";
+      return false;
+    }
+  }
+  if (!_cfg->ota.allowInsecureHttp) {
+    _otaRejectReason = "OTA over plain HTTP disabled (set ota.allowInsecureHttp=true)";
+    return false;
+  }
+  if (!filename.endsWith(".bin")) {
+    _otaRejectReason = "firmware filename must end with .bin";
+    return false;
+  }
+
+  size_t contentLen = req->contentLength();
+  if (contentLen == 0) {
+    _otaRejectReason = "missing Content-Length";
+    return false;
+  }
+
+  const esp_partition_t* target = esp_ota_get_next_update_partition(nullptr);
+  if (!target) {
+    _otaRejectReason = "no OTA target partition";
+    return false;
+  }
+  if (contentLen > target->size) {
+    _otaRejectReason = "firmware too large for OTA partition";
+    return false;
+  }
+
+  // Optional integrity check
+  if (req->hasHeader("X-OTA-MD5")) {
+    String md5 = req->getHeader("X-OTA-MD5")->value();
+    if (!Update.setMD5(md5.c_str())) {
+      _otaRejectReason = "invalid X-OTA-MD5 header";
+      return false;
+    }
+  }
+
+  _otaExpectedBytes = contentLen;
+  _otaReceivedBytes = 0;
+  _otaHeaderBytes = 0;
+  _otaVersionChecked = false;
+
+  if (!Update.begin(contentLen, U_FLASH, -1, LOW, target->label)) {
+    _otaRejectReason = String("Update.begin failed: ") + Update.errorString();
+    return false;
+  }
+
+  _log->warn(String("OTA precheck ok: target=") + target->label + " size=" + String((unsigned)contentLen));
+  return true;
+}
+
+bool RestServer::otaCheckVersionChunk(const uint8_t* data, size_t len) {
+  constexpr size_t kDescOffset = sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t);
+  constexpr size_t kMinHeader = kDescOffset + sizeof(esp_app_desc_t);
+
+  if (_otaVersionChecked) return true;
+
+  size_t remain = (_otaHeaderBytes < _otaHeaderBuf.size()) ? (_otaHeaderBuf.size() - _otaHeaderBytes) : 0;
+  size_t toCopy = (len < remain) ? len : remain;
+  if (toCopy > 0) {
+    memcpy(_otaHeaderBuf.data() + _otaHeaderBytes, data, toCopy);
+    _otaHeaderBytes += toCopy;
+  }
+
+  if (_otaHeaderBytes < kMinHeader) return true;
+
+  esp_app_desc_t incomingDesc{};
+  memcpy(&incomingDesc, _otaHeaderBuf.data() + kDescOffset, sizeof(esp_app_desc_t));
+
+  char newVer[33] = {0};
+  char curVer[33] = {0};
+  memcpy(newVer, incomingDesc.version, sizeof(incomingDesc.version));
+
+  const esp_app_desc_t* running = esp_app_get_description();
+  if (running) {
+    memcpy(curVer, running->version, sizeof(running->version));
+  }
+
+  _otaVersionChecked = true;
+
+  if (!newVer[0]) {
+    _otaRejectReason = "incoming firmware has empty version";
+    return false;
+  }
+
+  if (!_cfg->ota.allowDowngrade) {
+    int cmp = compareVersions(newVer, curVer);
+    if (cmp <= 0) {
+      _otaRejectReason = String("incoming version ") + newVer + " <= current " + curVer;
+      return false;
+    }
+  }
+
+  _log->info(String("OTA version check ok: current=") + curVer + " incoming=" + newVer);
+  return true;
 }
 
 bool RestServer::authOk(AsyncWebServerRequest* req) const {
@@ -276,48 +440,97 @@ void RestServer::setupRoutes() {
 
   // OTA (HTTP upload) - optional
   if (_cfg->ota.enabled) {
-    _srv->on("/api/v1/ota", HTTP_POST,
-      [this](AsyncWebServerRequest* req) {
-        if (!authOk(req)) return;
-        bool ok = !Update.hasError();
-        _log->setPaused(false);
-        _history->setPaused(false);
-        req->send(ok ? 200 : 500, "application/json", ok ? "{\"status\":\"ok\",\"reboot\":true}" : "{\"status\":\"error\"}");
-        if (ok) {
-          _log->warn("OTA done, rebooting");
-          ESP.restart();
-        }
-      },
-      [this](AsyncWebServerRequest* req, const String& filename, size_t index, uint8_t* data, size_t len, bool final) {
-        if (!authOk(req)) return;
+    if (!_cfg->security.enabled || !_cfg->security.restToken.length()) {
+      _log->error("OTA endpoint disabled: requires security.enabled=true and security.restToken");
+    } else if (!_cfg->ota.allowInsecureHttp) {
+      _log->warn("OTA endpoint disabled: plain HTTP blocked (set ota.allowInsecureHttp=true to allow)");
+    } else {
+      _srv->on("/api/v1/ota", HTTP_POST,
+        [this](AsyncWebServerRequest* req) {
+          if (!authOk(req)) return;
 
-        if (index == 0) {
-          _log->warn(String("OTA start: ") + filename);
-          _log->setPaused(true);
-          _history->setPaused(true);
+          bool ok = false;
+          String err = _otaRejectReason;
 
-          if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
-            _log->error("Update.begin failed");
+          if (!_otaRejected && !Update.hasError()) {
+            if (_otaExpectedBytes == 0) {
+              err = "OTA precheck not initialized";
+            } else if (_otaReceivedBytes != _otaExpectedBytes) {
+              err = String("OTA size mismatch: got ") + (unsigned)_otaReceivedBytes + ", expected " + (unsigned)_otaExpectedBytes;
+            } else if (Update.end(false)) {
+              ok = true;
+            } else {
+              err = String("Update.end failed: ") + Update.errorString();
+            }
+          } else if (!err.length()) {
+            err = Update.hasError() ? String(Update.errorString()) : "upload rejected";
+          }
+
+          _log->setPaused(false);
+          _history->setPaused(false);
+
+          if (ok) {
+            req->send(200, "application/json", "{\"status\":\"ok\",\"reboot\":true}");
+            _log->warn("OTA done, rebooting");
+            resetOtaState();
+            ESP.restart();
+            return;
+          }
+
+          if (Update.isRunning()) Update.abort();
+          _log->error(String("OTA failed: ") + err);
+          JsonDocument doc;
+          doc["status"] = "error";
+          doc["message"] = err;
+          sendJson(req, doc, 400);
+          resetOtaState();
+        },
+        [this](AsyncWebServerRequest* req, const String& filename, size_t index, uint8_t* data, size_t len, bool final) {
+          if (!authOk(req)) return;
+
+          if (index == 0) {
+            resetOtaState();
+            _log->warn(String("OTA start: ") + filename);
+            _log->setPaused(true);
+            _history->setPaused(true);
+
+            if (!otaPrecheck(req, filename)) {
+              _otaRejected = true;
+              _log->error(String("OTA precheck failed: ") + _otaRejectReason);
+              return;
+            }
+          }
+
+          if (_otaRejected) return;
+
+          if (!otaCheckVersionChunk(data, len)) {
+            _otaRejected = true;
+            _log->error(String("OTA version check failed: ") + _otaRejectReason);
+            if (Update.isRunning()) Update.abort();
+            return;
+          }
+
+          if (!Update.hasError()) {
+            size_t written = Update.write(data, len);
+            if (written != len) {
+              _otaRejected = true;
+              _otaRejectReason = String("Update.write failed: ") + Update.errorString();
+              _log->error(_otaRejectReason);
+              if (Update.isRunning()) Update.abort();
+              return;
+            }
+            _otaReceivedBytes += len;
+          }
+
+          if (final && _otaExpectedBytes && _otaReceivedBytes != _otaExpectedBytes) {
+            _otaRejected = true;
+            _otaRejectReason = String("incomplete upload: got ") + (unsigned)_otaReceivedBytes + ", expected " + (unsigned)_otaExpectedBytes;
+            _log->error(_otaRejectReason);
+            if (Update.isRunning()) Update.abort();
           }
         }
-
-        if (!Update.hasError()) {
-          if (Update.write(data, len) != len) {
-            _log->error("Update.write failed");
-          }
-        }
-
-        if (final) {
-          if (Update.end(true)) {
-            _log->warn("OTA upload complete");
-          } else {
-            _log->error("Update.end failed");
-            _log->setPaused(false);
-            _history->setPaused(false);
-          }
-        }
-      }
-    );
+      );
+    }
   }
 
   _srv->onNotFound([this](AsyncWebServerRequest* req) {

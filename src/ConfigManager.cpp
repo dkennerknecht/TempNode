@@ -50,6 +50,10 @@ bool ConfigManager::parseJson(const String& json) {
   _cfg.mqtt.enabled    = doc["mqtt"]["enabled"]    | _cfg.mqtt.enabled;
   _cfg.security.enabled= doc["security"]["enabled"]| _cfg.security.enabled;
   _cfg.ota.enabled     = doc["ota"]["enabled"]     | _cfg.ota.enabled;
+  _cfg.ota.allowInsecureHttp = doc["ota"]["allowInsecureHttp"] | _cfg.ota.allowInsecureHttp;
+  _cfg.ota.allowDowngrade = doc["ota"]["allowDowngrade"] | _cfg.ota.allowDowngrade;
+  _cfg.ota.healthConfirmMs = doc["ota"]["healthConfirmMs"] | _cfg.ota.healthConfirmMs;
+  _cfg.ota.requireNetworkForConfirm = doc["ota"]["requireNetworkForConfirm"] | _cfg.ota.requireNetworkForConfirm;
   _cfg.metrics.enabled = doc["metrics"]["enabled"] | _cfg.metrics.enabled;
   _cfg.history.enabled = doc["history"]["enabled"] | _cfg.history.enabled;
 
@@ -128,6 +132,10 @@ bool ConfigManager::validate() {
 
   if (_cfg.rest.port == 0) _cfg.rest.port = 80;
 
+  if (_cfg.ota.healthConfirmMs < 5000) {
+    _cfg.ota.healthConfirmMs = 5000;
+  }
+
   if (_cfg.security.enabled) {
     const bool basicConfigured = _cfg.security.restUser.length() > 0 && _cfg.security.restPass.length() > 0;
     const bool tokenConfigured = _cfg.security.restToken.length() > 0;
@@ -140,6 +148,15 @@ bool ConfigManager::validate() {
     if (basicConfigured && _cfg.security.restUser == "admin" && _cfg.security.restPass == "admin") {
       _log->error("config: weak REST credentials admin/admin are not allowed when security is enabled");
       ok = false;
+    }
+  }
+
+  if (_cfg.ota.enabled) {
+    if (!_cfg.security.enabled || !_cfg.security.restToken.length()) {
+      _log->warn("config: OTA enabled but security token missing. OTA endpoint will stay disabled.");
+    }
+    if (!_cfg.ota.allowInsecureHttp) {
+      _log->warn("config: OTA insecure HTTP not allowed. Set ota.allowInsecureHttp=true to enable OTA endpoint.");
     }
   }
 

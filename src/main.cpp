@@ -17,6 +17,7 @@
 #include "RestServer.h"
 #include "MqttClientManager.h"
 #include "WatchdogManager.h"
+#include "OtaHealthManager.h"
 
 static ConfigManager g_cfg;
 static StatsManager g_stats;
@@ -29,6 +30,7 @@ static HistoryManager g_history;
 static MqttClientManager g_mqtt;
 static RestServer g_rest;
 static WatchdogManager g_wdt;
+static OtaHealthManager g_otaHealth;
 
 static uint32_t g_nextStatsSaveMs = 0;
 static uint32_t g_nextSystemPublishMs = 0;
@@ -126,6 +128,7 @@ void setup() {
 
   // Network
   g_net.begin(cfg, g_log, g_time);
+  g_otaHealth.begin(cfg.ota, g_log, g_net);
 
   // Sensors
   g_sensors.begin(cfg.sensors, g_log, g_stats, g_time);
@@ -200,6 +203,7 @@ void loop() {
 
   g_time.loop();
   if (g_runNet) g_net.loop();
+  g_otaHealth.loop();
   if (g_runSensors) g_sensors.loop();
   if (g_runMqtt && g_mqttEnabled) g_mqtt.loop();
 
