@@ -1,0 +1,711 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "TempNode REST API",
+    "version": "1.0.0",
+    "description": "REST API for TempNode on ESP32-S3-ETH. Authentication is required when security.enabled=true (Bearer token or Basic auth)."
+  },
+  "servers": [
+    {
+      "url": "http://{node_ip}",
+      "description": "TempNode HTTP server",
+      "variables": {
+        "node_ip": {
+          "default": "192.168.1.50"
+        }
+      }
+    }
+  ],
+  "tags": [
+    {"name": "health"},
+    {"name": "sensors"},
+    {"name": "system"},
+    {"name": "metrics"},
+    {"name": "history"},
+    {"name": "ota"}
+  ],
+  "paths": {
+    "/api/v1/health": {
+      "get": {
+        "tags": ["health"],
+        "operationId": "getHealth",
+        "summary": "Detailed service health",
+        "description": "Returns status and detailed subsystem checks (network, mqtt, sd, time, ota_state).",
+        "security": [
+          {"bearerAuth": []},
+          {"basicAuth": []}
+        ],
+        "responses": {
+          "200": {
+            "description": "Healthy",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/HealthResponse"}
+              }
+            }
+          },
+          "503": {
+            "description": "Degraded",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/HealthResponse"}
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/temps": {
+      "get": {
+        "tags": ["sensors"],
+        "operationId": "getTemps",
+        "summary": "Latest readings of all discovered sensors",
+        "security": [
+          {"bearerAuth": []},
+          {"basicAuth": []}
+        ],
+        "responses": {
+          "200": {
+            "description": "Array of latest temperatures",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {"$ref": "#/components/schemas/TempReading"}
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/sensors": {
+      "get": {
+        "tags": ["sensors"],
+        "operationId": "getSensors",
+        "summary": "Sensor summary and latest values",
+        "security": [
+          {"bearerAuth": []},
+          {"basicAuth": []}
+        ],
+        "responses": {
+          "200": {
+            "description": "Sensor summary",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/SensorsSummaryResponse"}
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/sensors/interval": {
+      "get": {
+        "tags": ["sensors"],
+        "operationId": "getSensorInterval",
+        "summary": "Read current sensor interval",
+        "security": [
+          {"bearerAuth": []},
+          {"basicAuth": []}
+        ],
+        "responses": {
+          "200": {
+            "description": "Current interval and latest readings",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/SensorsSummaryResponse"}
+              }
+            }
+          },
+          "500": {
+            "description": "Sensors unavailable",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ErrorResponse"}
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      },
+      "post": {
+        "tags": ["sensors"],
+        "operationId": "setSensorIntervalPost",
+        "summary": "Set sensor interval",
+        "description": "Supports query parameter, form field, or JSON body with intervalMs.",
+        "parameters": [
+          {
+            "name": "intervalMs",
+            "in": "query",
+            "required": false,
+            "schema": {"type": "integer", "minimum": 1}
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/IntervalSetRequest"}
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "intervalMs": {"type": "integer", "minimum": 1}
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {"bearerAuth": []},
+          {"basicAuth": []}
+        ],
+        "responses": {
+          "200": {
+            "description": "Interval updated",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/IntervalSetResponse"}
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid interval",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ErrorResponse"}
+              }
+            }
+          },
+          "500": {
+            "description": "Sensors unavailable",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ErrorResponse"}
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      },
+      "put": {
+        "tags": ["sensors"],
+        "operationId": "setSensorIntervalPut",
+        "summary": "Set sensor interval (semantic update)",
+        "parameters": [
+          {
+            "name": "intervalMs",
+            "in": "query",
+            "required": false,
+            "schema": {"type": "integer", "minimum": 1}
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/IntervalSetRequest"}
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "intervalMs": {"type": "integer", "minimum": 1}
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {"bearerAuth": []},
+          {"basicAuth": []}
+        ],
+        "responses": {
+          "200": {
+            "description": "Interval updated",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/IntervalSetResponse"}
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid interval",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ErrorResponse"}
+              }
+            }
+          },
+          "500": {
+            "description": "Sensors unavailable",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ErrorResponse"}
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/system": {
+      "get": {
+        "tags": ["system"],
+        "operationId": "getSystem",
+        "summary": "System diagnostics",
+        "security": [
+          {"bearerAuth": []},
+          {"basicAuth": []}
+        ],
+        "responses": {
+          "200": {
+            "description": "System information",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/SystemResponse"}
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/metrics": {
+      "get": {
+        "tags": ["metrics"],
+        "operationId": "getMetrics",
+        "summary": "Runtime metrics and persisted counters",
+        "security": [
+          {"bearerAuth": []},
+          {"basicAuth": []}
+        ],
+        "responses": {
+          "200": {
+            "description": "Metrics payload",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/MetricsResponse"}
+              }
+            }
+          },
+          "404": {
+            "description": "Metrics disabled",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ErrorResponse"}
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/history": {
+      "get": {
+        "tags": ["history"],
+        "operationId": "getHistory",
+        "summary": "Tail history entries",
+        "parameters": [
+          {
+            "name": "sensor",
+            "in": "query",
+            "required": false,
+            "schema": {"type": "string"},
+            "description": "Optional sensor ID filter"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 100},
+            "description": "Maximum number of entries"
+          }
+        ],
+        "security": [
+          {"bearerAuth": []},
+          {"basicAuth": []}
+        ],
+        "responses": {
+          "200": {
+            "description": "History entries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {"$ref": "#/components/schemas/HistoryEntry"}
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "History disabled",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ErrorResponse"}
+              }
+            }
+          },
+          "503": {
+            "description": "History unavailable",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ErrorResponse"}
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/ota": {
+      "post": {
+        "tags": ["ota"],
+        "operationId": "postOtaUpload",
+        "summary": "Upload OTA firmware image",
+        "description": "Endpoint is only active when OTA and security preconditions are fulfilled in runtime config.",
+        "parameters": [
+          {
+            "name": "X-OTA-SHA256",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-fA-F0-9]{64}$"
+            },
+            "description": "Recommended integrity header"
+          },
+          {
+            "name": "X-OTA-MD5",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-fA-F0-9]{32}$"
+            },
+            "description": "Legacy integrity header"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["firmware"],
+                "properties": {
+                  "firmware": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Firmware .bin file"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {"bearerAuth": []}
+        ],
+        "responses": {
+          "200": {
+            "description": "OTA accepted, reboot pending",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/OtaSuccessResponse"}
+              }
+            }
+          },
+          "400": {
+            "description": "Upload rejected",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/OtaErrorResponse"}
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "token"
+      },
+      "basicAuth": {
+        "type": "http",
+        "scheme": "basic"
+      }
+    },
+    "schemas": {
+      "ErrorResponse": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": {"type": "string"}
+        },
+        "additionalProperties": true
+      },
+      "HealthResponse": {
+        "type": "object",
+        "required": ["status", "timestamp", "checks"],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["ok", "degraded"]
+          },
+          "timestamp": {"type": "integer"},
+          "checks": {
+            "type": "object",
+            "required": ["network", "mqtt", "sd", "time", "ota_state"],
+            "properties": {
+              "network": {"$ref": "#/components/schemas/HealthNetwork"},
+              "mqtt": {"$ref": "#/components/schemas/HealthMqtt"},
+              "sd": {"$ref": "#/components/schemas/HealthSd"},
+              "time": {"$ref": "#/components/schemas/HealthTime"},
+              "ota_state": {"$ref": "#/components/schemas/HealthOtaState"}
+            }
+          }
+        }
+      },
+      "HealthNetwork": {
+        "type": "object",
+        "required": ["ok", "up", "link", "ip", "mac"],
+        "properties": {
+          "ok": {"type": "boolean"},
+          "up": {"type": "boolean"},
+          "link": {"type": "boolean"},
+          "ip": {"type": "string"},
+          "mac": {"type": "string"}
+        }
+      },
+      "HealthMqtt": {
+        "type": "object",
+        "required": ["required", "enabled", "connected", "ok", "host", "port"],
+        "properties": {
+          "required": {"type": "boolean"},
+          "enabled": {"type": "boolean"},
+          "connected": {"type": "boolean"},
+          "ok": {"type": "boolean"},
+          "host": {"type": "string"},
+          "port": {"type": "integer"}
+        }
+      },
+      "HealthSd": {
+        "type": "object",
+        "required": ["required", "available", "ok", "sdMountFails", "sdWriteFails"],
+        "properties": {
+          "required": {"type": "boolean"},
+          "available": {"type": "boolean"},
+          "ok": {"type": "boolean"},
+          "sdMountFails": {"type": "integer"},
+          "sdWriteFails": {"type": "integer"}
+        }
+      },
+      "HealthTime": {
+        "type": "object",
+        "required": ["valid", "source", "stale", "ok", "lastNtpSyncUptimeMs", "ntpSyncFails"],
+        "properties": {
+          "valid": {"type": "boolean"},
+          "source": {"type": "string", "enum": ["NTP", "UPTIME"]},
+          "stale": {"type": "boolean"},
+          "ok": {"type": "boolean"},
+          "lastNtpSyncUptimeMs": {"type": "integer"},
+          "ntpSyncFails": {"type": "integer"}
+        }
+      },
+      "HealthOtaState": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "endpointActive",
+          "pendingVerify",
+          "requireHashHeader",
+          "allowDowngrade",
+          "healthConfirmMs",
+          "ok",
+          "imageStateKnown",
+          "imageState"
+        ],
+        "properties": {
+          "enabled": {"type": "boolean"},
+          "endpointActive": {"type": "boolean"},
+          "pendingVerify": {"type": "boolean"},
+          "requireHashHeader": {"type": "boolean"},
+          "allowDowngrade": {"type": "boolean"},
+          "healthConfirmMs": {"type": "integer"},
+          "ok": {"type": "boolean"},
+          "imageStateKnown": {"type": "boolean"},
+          "imageState": {"type": "string"}
+        }
+      },
+      "TempReading": {
+        "type": "object",
+        "required": ["sensorId", "tempC", "status", "timestamp", "timeValid", "timeSource"],
+        "properties": {
+          "sensorId": {"type": "string"},
+          "tempC": {"type": "number"},
+          "status": {"type": "integer"},
+          "timestamp": {"type": "integer"},
+          "timeValid": {"type": "boolean"},
+          "timeSource": {"type": "string", "enum": ["NTP", "UPTIME"]}
+        }
+      },
+      "SensorSummaryEntry": {
+        "type": "object",
+        "required": ["id", "status", "timestampMs"],
+        "properties": {
+          "id": {"type": "string"},
+          "tempC": {
+            "oneOf": [
+              {"type": "number"},
+              {"type": "null"}
+            ]
+          },
+          "status": {"type": "integer"},
+          "timestampMs": {"type": "integer"}
+        }
+      },
+      "SensorsSummaryResponse": {
+        "type": "object",
+        "required": ["intervalMs", "sensors"],
+        "properties": {
+          "intervalMs": {"type": "integer"},
+          "sensors": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/SensorSummaryEntry"}
+          }
+        }
+      },
+      "IntervalSetRequest": {
+        "type": "object",
+        "properties": {
+          "intervalMs": {"type": "integer", "minimum": 1}
+        }
+      },
+      "IntervalSetResponse": {
+        "type": "object",
+        "required": ["intervalMs", "ok"],
+        "properties": {
+          "intervalMs": {"type": "integer"},
+          "ok": {"type": "boolean"}
+        }
+      },
+      "SystemResponse": {
+        "type": "object",
+        "required": [
+          "timestamp",
+          "timeValid",
+          "timeSource",
+          "uptimeMs",
+          "heap",
+          "chipModel",
+          "chipRev",
+          "sdk",
+          "ip",
+          "link",
+          "mac",
+          "resetReason",
+          "bootCount"
+        ],
+        "properties": {
+          "timestamp": {"type": "integer"},
+          "timeValid": {"type": "boolean"},
+          "timeSource": {"type": "string", "enum": ["NTP", "UPTIME"]},
+          "uptimeMs": {"type": "integer"},
+          "heap": {"type": "integer"},
+          "chipModel": {"type": "string"},
+          "chipRev": {"type": "integer"},
+          "sdk": {"type": "string"},
+          "ip": {"type": "string"},
+          "link": {"type": "boolean"},
+          "mac": {"type": "string"},
+          "resetReason": {"type": "string"},
+          "bootCount": {"type": "integer"}
+        }
+      },
+      "MetricsStats": {
+        "type": "object",
+        "required": ["sdMountFails", "sdWriteFails", "mqttReconnects", "sensorReadErrors", "ntpSyncFails"],
+        "properties": {
+          "sdMountFails": {"type": "integer"},
+          "sdWriteFails": {"type": "integer"},
+          "mqttReconnects": {"type": "integer"},
+          "sensorReadErrors": {"type": "integer"},
+          "ntpSyncFails": {"type": "integer"}
+        }
+      },
+      "MetricsResponse": {
+        "type": "object",
+        "required": ["heap", "uptimeMs", "link", "ip", "mqttConnected", "logQueueDepth", "logDrops", "stats"],
+        "properties": {
+          "heap": {"type": "integer"},
+          "uptimeMs": {"type": "integer"},
+          "link": {"type": "boolean"},
+          "ip": {"type": "string"},
+          "mqttConnected": {"type": "boolean"},
+          "logQueueDepth": {"type": "integer"},
+          "logDrops": {"type": "integer"},
+          "stats": {"$ref": "#/components/schemas/MetricsStats"}
+        }
+      },
+      "HistoryEntry": {
+        "type": "object",
+        "required": ["timestamp", "sensorId", "tempC", "status", "timeSource"],
+        "properties": {
+          "timestamp": {"type": "integer"},
+          "sensorId": {"type": "string"},
+          "tempC": {"type": "number"},
+          "status": {"type": "integer"},
+          "timeSource": {"type": "integer"}
+        },
+        "additionalProperties": true
+      },
+      "OtaSuccessResponse": {
+        "type": "object",
+        "required": ["status", "reboot"],
+        "properties": {
+          "status": {"type": "string", "enum": ["ok"]},
+          "reboot": {"type": "boolean"}
+        }
+      },
+      "OtaErrorResponse": {
+        "type": "object",
+        "required": ["status", "message"],
+        "properties": {
+          "status": {"type": "string", "enum": ["error"]},
+          "message": {"type": "string"}
+        }
+      }
+    }
+  }
+}

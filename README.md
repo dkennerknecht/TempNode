@@ -27,6 +27,7 @@ It reads DS18B20 sensors, exposes data over REST, publishes to MQTT, stores logs
 - [Smoke Test](#smoke-test)
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
+- [API Contract](#api-contract)
 - [License](#license)
 
 ## Overview
@@ -163,7 +164,7 @@ If `security.enabled=true`, endpoints require authentication.
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/health` | Returns `ok` or `degraded` |
+| GET | `/health` | Returns `status` plus detailed checks (`network`, `mqtt`, `sd`, `time`, `ota_state`) |
 | GET | `/temps` | Latest readings for all discovered sensors |
 | GET | `/sensors` | Sensor summary plus current `intervalMs` |
 | GET | `/sensors/interval` | Read current sensor interval |
@@ -182,6 +183,8 @@ No auth (only if security is disabled):
 curl -sS "http://$NODE_IP/api/v1/health"
 curl -sS "http://$NODE_IP/api/v1/temps"
 ```
+
+`/health` response now includes per-subsystem detail fields under `checks.*` (for example `checks.network.up`, `checks.mqtt.connected`, `checks.sd.available`, `checks.time.valid`, `checks.ota_state.imageState`).
 
 Bearer token:
 
@@ -359,6 +362,15 @@ Check all OTA prerequisites:
 pio run
 pio run -t upload
 pio device monitor
+```
+
+## API Contract
+
+- OpenAPI spec: [`docs/openapi.json`](docs/openapi.json)
+- Contract test (spec vs. registered REST routes):
+
+```bash
+python3 scripts/contract_test_openapi.py
 ```
 
 ## License

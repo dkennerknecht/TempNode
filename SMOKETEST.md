@@ -45,7 +45,7 @@ curl -sS "http://$NODE_IP/api/v1/history?limit=10"
 ```
 
 Erwartung:
-- `health` liefert `{"status":"ok"}` oder bei fehlendem MQTT `degraded` (wenn MQTT aktiviert ist, aber nicht verbunden).
+- `health` liefert `status` (`ok` oder `degraded`) plus Detailchecks unter `checks.network`, `checks.mqtt`, `checks.sd`, `checks.time`, `checks.ota_state`.
 - `temps` enthält Sensorwerte oder leere Liste.
 - `metrics.stats.bootCount` steigt nach Reboot.
 

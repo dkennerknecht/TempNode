@@ -19,6 +19,18 @@ static const char* timeSourceStr(uint8_t src) {
   return (src == 0) ? "NTP" : "UPTIME";
 }
 
+static const char* otaImgStateStr(esp_ota_img_states_t state) {
+  switch (state) {
+    case ESP_OTA_IMG_NEW: return "NEW";
+    case ESP_OTA_IMG_PENDING_VERIFY: return "PENDING_VERIFY";
+    case ESP_OTA_IMG_VALID: return "VALID";
+    case ESP_OTA_IMG_INVALID: return "INVALID";
+    case ESP_OTA_IMG_ABORTED: return "ABORTED";
+    case ESP_OTA_IMG_UNDEFINED: return "UNDEFINED";
+    default: return "UNKNOWN";
+  }
+}
+
 static String bytesToHex(const uint8_t* data, size_t len) {
   static const char* hex = "0123456789abcdef";
   String out;
@@ -245,13 +257,90 @@ void RestServer::begin(const AppConfig& cfg,
 void RestServer::setupRoutes() {
   _srv->on("/api/v1/health", HTTP_GET, [this](AsyncWebServerRequest* req) {
     if (!authOk(req)) return;
-    bool ok = _net->isUp();
-    if (_cfg->mqtt.enabled) ok = ok && _mqtt->connected();
-    if (ok) {
-      req->send(200, "application/json", "{\"status\":\"ok\"}");
-    } else {
-      req->send(503, "application/json", "{\"status\":\"degraded\"}");
+
+    PersistedStats st = _stats->snapshot();
+    TimeStamp ts = _tm->now();
+
+    const bool networkOk = _net->isUp();
+
+    const bool mqttRequired = _cfg->mqtt.enabled;
+    const bool mqttConnected = _mqtt->connected();
+    const bool mqttOk = !mqttRequired || mqttConnected;
+
+    const bool sdRequired = _cfg->history.enabled;
+    const bool sdAvailable = _log->sdAvailable();
+    const bool sdOk = !sdRequired || sdAvailable;
+
+    constexpr uint32_t kTimeStaleThresholdMs = 6UL * 60UL * 60UL * 1000UL;
+    const bool timeValid = _tm->timeValid();
+    const bool timeStale = timeValid ? _tm->timeStale(kTimeStaleThresholdMs) : false;
+    const bool timeOk = timeValid && !timeStale;
+
+    const bool otaEnabled = _cfg->ota.enabled;
+    const bool otaEndpointActive = otaEnabled &&
+                                   _cfg->security.enabled &&
+                                   _cfg->security.restToken.length() &&
+                                   _cfg->ota.allowInsecureHttp;
+
+    esp_ota_img_states_t imgState = ESP_OTA_IMG_UNDEFINED;
+    bool imgStateKnown = false;
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    if (running && esp_ota_get_state_partition(running, &imgState) == ESP_OK) {
+      imgStateKnown = true;
     }
+    const bool otaPendingVerify = imgStateKnown && (imgState == ESP_OTA_IMG_PENDING_VERIFY);
+    const bool otaOk = !otaEnabled || otaEndpointActive;
+
+    const bool ok = networkOk && mqttOk && sdOk && otaOk;
+
+    JsonDocument doc;
+    doc["status"] = ok ? "ok" : "degraded";
+    doc["timestamp"] = (uint64_t)ts.epochMs;
+
+    JsonObject checks = doc["checks"].to<JsonObject>();
+
+    JsonObject network = checks["network"].to<JsonObject>();
+    network["ok"] = networkOk;
+    network["up"] = _net->isUp();
+    network["link"] = _net->linkUp();
+    network["ip"] = _net->ip().toString();
+    network["mac"] = _net->macStr();
+
+    JsonObject mqtt = checks["mqtt"].to<JsonObject>();
+    mqtt["required"] = mqttRequired;
+    mqtt["enabled"] = _cfg->mqtt.enabled;
+    mqtt["connected"] = mqttConnected;
+    mqtt["ok"] = mqttOk;
+    mqtt["host"] = _cfg->mqtt.host;
+    mqtt["port"] = _cfg->mqtt.port;
+
+    JsonObject sd = checks["sd"].to<JsonObject>();
+    sd["required"] = sdRequired;
+    sd["available"] = sdAvailable;
+    sd["ok"] = sdOk;
+    sd["sdMountFails"] = st.sdMountFails;
+    sd["sdWriteFails"] = st.sdWriteFails;
+
+    JsonObject time = checks["time"].to<JsonObject>();
+    time["valid"] = timeValid;
+    time["source"] = (ts.source == TimeSource::NTP) ? "NTP" : "UPTIME";
+    time["stale"] = timeStale;
+    time["ok"] = timeOk;
+    time["lastNtpSyncUptimeMs"] = (uint64_t)_tm->lastNtpSyncMs();
+    time["ntpSyncFails"] = st.ntpSyncFails;
+
+    JsonObject otaState = checks["ota_state"].to<JsonObject>();
+    otaState["enabled"] = otaEnabled;
+    otaState["endpointActive"] = otaEndpointActive;
+    otaState["pendingVerify"] = otaPendingVerify;
+    otaState["requireHashHeader"] = _cfg->ota.requireHashHeader;
+    otaState["allowDowngrade"] = _cfg->ota.allowDowngrade;
+    otaState["healthConfirmMs"] = _cfg->ota.healthConfirmMs;
+    otaState["ok"] = otaOk;
+    otaState["imageStateKnown"] = imgStateKnown;
+    otaState["imageState"] = otaImgStateStr(imgState);
+
+    sendJson(req, doc, ok ? 200 : 503);
   });
 
   _srv->on("/api/v1/temps", HTTP_GET, [this](AsyncWebServerRequest* req) {

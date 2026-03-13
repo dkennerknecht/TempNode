@@ -33,6 +33,7 @@ public:
   // Metrics
   uint32_t drops() const { return _drops; }
   uint32_t queueDepth() const;
+  bool sdAvailable() const { return _sdAvailable; }
 
   // Pause/resume (for OTA)
   void setPaused(bool paused) { _paused = paused; }
