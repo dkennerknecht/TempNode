@@ -1,54 +1,64 @@
-# TempNode
+<div align="center">
+  <img src="ESP32-S3-ETH.jpg" alt="Waveshare ESP32-S3-ETH board" width="860" />
 
-Produktionsnahes PlatformIO-Projekt (Arduino Framework) fuer einen Ethernet-basierten Temperatur-Node auf dem **Waveshare ESP32-S3-ETH**.
+  # TempNode
 
-TempNode liest DS18B20-Sensoren zyklisch aus, stellt Werte per REST bereit, publiziert per MQTT, schreibt Logs/History auf SD und unterstuetzt abgesicherte OTA-Updates.
+  **Ethernet-first DS18B20 telemetry node for Waveshare ESP32-S3-ETH**  
+  REST API | MQTT | SD Logging | Watchdog | Secure OTA
 
-![Waveshare ESP32-S3-ETH](ESP32-S3-ETH.jpg)
+  ![PlatformIO](https://img.shields.io/badge/PlatformIO-ESP32--S3-orange?logo=platformio)
+  ![Framework](https://img.shields.io/badge/Framework-Arduino-blue)
+  ![Network](https://img.shields.io/badge/Network-W5500%20Ethernet-success)
+  ![OTA](https://img.shields.io/badge/OTA-Token%20Protected-critical)
+</div>
 
-## Inhalt
+TempNode is a production-oriented PlatformIO project (Arduino framework) for an Ethernet-connected temperature node.
+It reads DS18B20 sensors, exposes data over REST, publishes to MQTT, stores logs/history on SD, and supports secured OTA firmware updates.
 
-- [Ueberblick](#ueberblick)
-- [Technik-Stack](#technik-stack)
-- [Hardware und Pinout](#hardware-und-pinout)
-- [Schnellstart](#schnellstart)
-- [Konfiguration (`/config.json`)](#konfiguration-configjson)
+## Table of Contents
+
+- [Overview](#overview)
+- [Tech Stack](#tech-stack)
+- [Hardware and Pinout](#hardware-and-pinout)
+- [Quick Start](#quick-start)
+- [Configuration (`/config.json`)](#configuration-configjson)
 - [REST API](#rest-api)
 - [MQTT](#mqtt)
 - [OTA Update](#ota-update)
-- [Persistenz auf SD](#persistenz-auf-sd)
+- [SD Persistence](#sd-persistence)
 - [Smoke Test](#smoke-test)
 - [Troubleshooting](#troubleshooting)
-- [Entwicklung](#entwicklung)
+- [Development](#development)
+- [License](#license)
 
-## Ueberblick
+## Overview
 
-### Kernfunktionen
+### Core Features
 
-- Event-driven Laufzeit ohne blockierende `delay()`-Schleifen (nur `delay(0)` fuer Yield).
-- DS18B20 Auto-Discovery (Sensor-ID = ROM-ID als Hex-String).
-- Nicht-blockierende Messung via State Machine (`request -> wait -> read`).
-- REST API auf konfigurierbarem Port.
-- MQTT Publishing inkl. LWT (`online/offline`) und Offline-Ringbuffer pro Sensor.
-- Asynchrones Logging (Serial immer, SD optional) mit Queue + Worker Task.
-- Temperatur-History als JSONL auf SD mit REST-Tail-Abfrage.
-- Persistente Betriebsstatistiken (`/stats.json`) mit sicheren Writes (`.tmp` + rename).
-- Optionale Watchdog-Integration.
-- Optionale OTA-Updates mit Sicherheits- und Versions-Pruefung.
+- Event-driven runtime without blocking `delay()` loops (`delay(0)` only for yield).
+- DS18B20 auto-discovery (sensor ID = ROM ID in hex).
+- Non-blocking measurement state machine (`request -> wait -> read`).
+- REST API on configurable port.
+- MQTT publishing with retained topics, LWT (`online/offline`), and per-sensor offline ring buffers.
+- Asynchronous logging (Serial always, SD optional) with queue + worker task.
+- Temperature history stored as JSONL on SD with REST tail query.
+- Persistent runtime statistics (`/stats.json`) using safe write (`.tmp` + rename).
+- Optional task watchdog support.
+- Optional OTA updates with authentication, size checks, and version gating.
 
-### Laufzeitverhalten
+### Runtime Behavior
 
-- Gestaffelter Startup (Netzwerk -> Sensoren -> MQTT), um Boot robust zu halten.
-- Zeitbasis startet mit Uptime und wechselt auf NTP, sobald Netzwerk verfuegbar ist.
-- Bei vorhandenem, aber unlesbarem `/config.json` greift bewusst ein **Fail-Fast Halt**.
+- Staged startup sequence (network -> sensors -> MQTT) for more robust boot behavior.
+- Time source starts as uptime and switches to NTP when network is available.
+- Deliberate fail-fast halt if `/config.json` exists but cannot be read or parsed.
 
-## Technik-Stack
+## Tech Stack
 
 - PlatformIO
-- Arduino Framework fuer ESP32-S3
-- Board: `esp32-s3-devkitc-1`
-- Plattform: `https://github.com/pioarduino/platform-espressif32.git`
-- Kernbibliotheken:
+- Arduino framework for ESP32-S3
+- Board target: `esp32-s3-devkitc-1`
+- Platform: `https://github.com/pioarduino/platform-espressif32.git`
+- Key libraries:
   - `ESPAsyncWebServer`
   - `AsyncTCP`
   - `AsyncMqttClient`
@@ -56,20 +66,20 @@ TempNode liest DS18B20-Sensoren zyklisch aus, stellt Werte per REST bereit, publ
   - `OneWire`
   - `ArduinoJson`
 
-Hinweis: Ein Pre-Build-Script (`scripts/patch_onewire.py`) patched lokal die installierte OneWire-Version, um bekannte Warnungen zu vermeiden.
+Note: A pre-build script (`scripts/patch_onewire.py`) patches the locally installed OneWire source to silence a known warning pattern.
 
-## Hardware und Pinout
+## Hardware and Pinout
 
-### Zielboard
+### Target Board
 
 - Waveshare ESP32-S3-ETH
-- Ethernet PHY: W5500 (SPI)
-- Onboard TF/SD Slot (SPI)
-- DS18B20 an 1-Wire
+- W5500 Ethernet over SPI
+- Onboard TF/SD slot over SPI
+- DS18B20 on 1-Wire
 
-### Pinbelegung
+### Pin Mapping
 
-| Funktion | Pin |
+| Function | Pin |
 |---|---|
 | ETH MISO | GPIO12 |
 | ETH MOSI | GPIO11 |
@@ -82,16 +92,16 @@ Hinweis: Ein Pre-Build-Script (`scripts/patch_onewire.py`) patched lokal die ins
 | SD MISO | GPIO5 |
 | SD SCK | GPIO7 |
 | 1-Wire Data (DS18B20) | GPIO17 |
-| RGB LED (off at boot, primary/alt) | GPIO21 / GPIO38 |
+| RGB LED off-at-boot pins | GPIO21 / GPIO38 |
 
-## Schnellstart
+## Quick Start
 
-### 1. Voraussetzungen
+### 1. Prerequisites
 
-- PlatformIO Core installiert (`pio` CLI verfuegbar)
-- USB-Zugang zum Board
-- Optional: SD-Karte (FAT32)
-- Optional: MQTT Broker
+- PlatformIO Core installed (`pio` CLI available)
+- USB connection to the board
+- Optional SD card (FAT32)
+- Optional MQTT broker
 
 ### 2. Build
 
@@ -99,104 +109,104 @@ Hinweis: Ein Pre-Build-Script (`scripts/patch_onewire.py`) patched lokal die ins
 pio run
 ```
 
-### 3. Flashen
+### 3. Flash
 
 ```bash
 pio run -t upload
 ```
 
-### 4. Monitor
+### 4. Serial Monitor
 
 ```bash
 pio device monitor
 ```
 
-### 5. Optional: Konfiguration auf SD
+### 5. Optional SD Configuration
 
-- Datei [`config.example.json`](config.example.json) als Vorlage nutzen.
-- Als `/config.json` im Root der SD-Karte ablegen.
+- Use [`config.example.json`](config.example.json) as template.
+- Save it as `/config.json` on SD card root.
 
-## Konfiguration (`/config.json`)
+## Configuration (`/config.json`)
 
-- Defaults sind im Code hinterlegt.
-- `/config.json` ist optional.
-- Falls Datei existiert und nicht lesbar/parst: absichtlicher Halt (Fail-Fast).
+- Code defaults are always present.
+- `/config.json` is optional.
+- If the file exists but is unreadable or invalid JSON, the firmware intentionally halts (fail-fast).
 
-### Wichtige Bereiche
+### Main Sections
 
-- `network`: DHCP oder statische IP (`ip/gw/mask/dns`)
-- `sensors`: Intervall, Aufloesung, Conversion-Timeout
-- `rest`: Endpoint aktiv + Port
-- `mqtt`: Broker, Topic-Basis, Reconnect-Bounds, Buffer-Groesse
-- `history`: JSONL-Pfad + Flush
-- `metrics`: `/api/v1/metrics` aktiv/deaktivierbar
-- `watchdog`: optionaler Task-WDT
-- `security`: REST/MQTT Auth
-- `ota`: OTA-Gating, Downgrade-Regel, Health-Confirm
+- `network`: DHCP or static IP (`ip/gw/mask/dns`)
+- `sensors`: interval, resolution, conversion timeout
+- `rest`: enable/disable and port
+- `mqtt`: broker, topic base, reconnect bounds, offline buffer size
+- `history`: JSONL path + flush behavior
+- `metrics`: toggle `/api/v1/metrics`
+- `watchdog`: optional task WDT
+- `security`: REST/MQTT auth settings
+- `ota`: OTA endpoint gating, downgrade policy, health confirmation window
 
-### Security-Regeln
+### Security Rules
 
-Wenn `security.enabled=true`, muss mindestens eine REST-Auth-Methode gesetzt sein:
+When `security.enabled=true`, at least one REST auth method must be configured:
 
-- Bearer-Token (`security.restToken`)
-- oder Basic Auth (`security.restUser` + `security.restPass`)
+- Bearer token (`security.restToken`)
+- or Basic auth (`security.restUser` + `security.restPass`)
 
-`?token=` als Query-Parameter wird absichtlich **nicht** akzeptiert.
+Query token auth (`?token=`) is intentionally not supported.
 
 ## REST API
 
-Basis: `http://<NODE_IP>/api/v1`
+Base URL: `http://<NODE_IP>/api/v1`
 
-Wenn `security.enabled=true`, sind Endpoints authentifiziert.
+If `security.enabled=true`, endpoints require authentication.
 
 ### Endpoints
 
-| Methode | Pfad | Beschreibung |
+| Method | Path | Description |
 |---|---|---|
-| GET | `/health` | `ok` oder `degraded` (degraded z. B. bei aktivem, aber getrenntem MQTT) |
-| GET | `/temps` | Liste aller letzten Sensorwerte |
-| GET | `/sensors` | Zusammenfassung inkl. `intervalMs` und letzter Werte |
-| GET | `/sensors/interval` | Aktuelles Sensor-Intervall |
-| GET | `/sensors/interval?intervalMs=...` | Setzt Intervall und liefert Rueckgabe |
-| POST | `/sensors/interval` | Setzt Intervall (`query`, `form` oder JSON Body) |
-| GET | `/system` | Systeminfos (IP, Heap, Uptime, Chip, BootCount, ResetReason) |
-| GET | `/metrics` | Laufzeitmetriken + persistente Stats |
-| GET | `/history?sensor=<id>&limit=<n>` | Letzte History-Eintraege (JSON Array), `limit` 1..1000 |
-| POST | `/ota` | Firmware Upload (nur wenn OTA aktiv und freigeschaltet) |
+| GET | `/health` | Returns `ok` or `degraded` |
+| GET | `/temps` | Latest readings for all discovered sensors |
+| GET | `/sensors` | Sensor summary plus current `intervalMs` |
+| GET | `/sensors/interval` | Read current sensor interval |
+| GET | `/sensors/interval?intervalMs=...` | Set interval and return updated state |
+| POST | `/sensors/interval` | Set interval via query, form, or JSON body |
+| GET | `/system` | System diagnostics (IP, heap, uptime, chip, boot stats) |
+| GET | `/metrics` | Runtime metrics + persistent stats |
+| GET | `/history?sensor=<id>&limit=<n>` | Tail history entries as JSON array (`limit` 1..1000) |
+| POST | `/ota` | Firmware upload endpoint (conditionally enabled) |
 
-### Beispiele
+### Example Calls
 
-Ohne Auth (nur wenn Security aus):
+No auth (only if security is disabled):
 
 ```bash
 curl -sS "http://$NODE_IP/api/v1/health"
 curl -sS "http://$NODE_IP/api/v1/temps"
 ```
 
-Mit Bearer-Token:
+Bearer token:
 
 ```bash
-TOKEN="<dein-token>"
+TOKEN="<your-token>"
 curl -sS -H "Authorization: Bearer $TOKEN" "http://$NODE_IP/api/v1/system"
 ```
 
-Mit Basic Auth:
+Basic auth:
 
 ```bash
-curl -u api:meinpass "http://$NODE_IP/api/v1/system"
+curl -u api:yourpassword "http://$NODE_IP/api/v1/system"
 ```
 
 ## MQTT
 
-### Topic-Schema
+### Topic Layout
 
-Standard (`baseTopic = device`):
+Default (`baseTopic = device`):
 
 - `device/<deviceId>/temps/<sensorId>` (retained)
 - `device/<deviceId>/system` (retained)
 - `device/<deviceId>/status` (retained, LWT)
 
-### Payload-Beispiele
+### Payload Examples
 
 `temps/<sensorId>`:
 
@@ -223,33 +233,33 @@ Standard (`baseTopic = device`):
 }
 ```
 
-Hinweis: In diesem Build ist MQTT-TLS nicht aktiv (`ASYNC_TCP_SSL_ENABLED=0`, AsyncMqttClient ohne `setSecure()` in der verwendeten Version).
+Note: In the current build, MQTT TLS is not active (`ASYNC_TCP_SSL_ENABLED=0`, and this AsyncMqttClient version does not expose `setSecure()`).
 
 ## OTA Update
 
-### Voraussetzungen
+### Requirements
 
 In `/config.json`:
 
 - `ota.enabled = true`
-- `ota.allowInsecureHttp = true` (expliziter Opt-in, da REST ueber HTTP laeuft)
+- `ota.allowInsecureHttp = true` (explicit opt-in because REST server is plain HTTP)
 - `security.enabled = true`
-- `security.restToken` gesetzt
+- `security.restToken` configured
 
-### Sicherheits-/Validierungsregeln
+### Validation and Safety Rules
 
-- OTA akzeptiert nur `Authorization: Bearer <token>`.
-- Upload-Datei muss auf `.bin` enden.
-- `Content-Length` ist Pflicht.
-- Firmwaregroesse wird gegen OTA-Partition geprueft.
-- Optionaler Integritaetscheck ueber Header `X-OTA-MD5`.
-- Standard: Downgrade und gleiche Version blockiert (`ota.allowDowngrade=false`).
+- Requires `Authorization: Bearer <token>`.
+- Firmware filename must end in `.bin`.
+- `Content-Length` must be present.
+- Firmware size is checked against OTA target partition.
+- Optional integrity check via `X-OTA-MD5` header.
+- By default, downgrade or same-version uploads are rejected (`ota.allowDowngrade=false`).
 
-### Upload-Beispiel
+### Upload Example
 
 ```bash
 NODE_IP=192.168.1.50
-TOKEN="<dein-token>"
+TOKEN="<your-token>"
 
 curl -i \
   -H "Authorization: Bearer $TOKEN" \
@@ -257,87 +267,90 @@ curl -i \
   "http://$NODE_IP/api/v1/ota"
 ```
 
-Erfolg:
+Success behavior:
 
-- `HTTP 200` mit `{"status":"ok","reboot":true}`
-- Device rebootet automatisch.
+- `HTTP 200` with `{"status":"ok","reboot":true}`
+- device reboots automatically
 
-### OTA Health-Confirm
+### OTA Health Confirmation
 
-Nach einem OTA-bootenden Image wird die Firmware erst nach einer Health-Phase bestaetigt:
+After an OTA boot, image validation is deferred to a health gate:
 
-- Wartezeit: `ota.healthConfirmMs`
-- Optionaler Netzwerk-Gate: `ota.requireNetworkForConfirm`
-- Bei ausbleibender Netzverfuegbarkeit innerhalb des erweiterten Fensters wird ein Rollback angefordert.
+- Waits `ota.healthConfirmMs`
+- Optional network dependency: `ota.requireNetworkForConfirm`
+- If the network does not recover within the extended window, rollback is requested
 
-## Persistenz auf SD
+## SD Persistence
 
-Typische Dateien:
+Typical files:
 
-- `/config.json` (optional, manuell)
-- `/history.jsonl` (Messhistorie)
-- `/stats.json` (persistente Betriebszaehler)
-- `/log-YYYYMMDD.log` oder `/log-uptime.log` (Logs)
+- `/config.json` (optional, user-provided)
+- `/history.jsonl` (temperature history)
+- `/stats.json` (persistent counters)
+- `/log-YYYYMMDD.log` or `/log-uptime.log` (runtime logs)
 
-### Logformat
+### Log Format
 
 ```text
 YYYY-MM-DD HH:MM:SS,mmm;LEVEL;Message
 ```
 
-Bei fehlender NTP-Zeit werden Uptime-basierte Zeitstempel verwendet.
+If NTP is not available, uptime-based timestamps are used.
 
 ## Smoke Test
 
-Die Hardware-Checkliste fuer Abnahme/Regressionen steht in [`SMOKETEST.md`](SMOKETEST.md).
+Full hardware validation checklist is available in [`SMOKETEST.md`](SMOKETEST.md).
 
 ## Troubleshooting
 
-### `pio run` scheitert bei Libs
-
-- Sauber neu bauen:
+### `pio run` fails because of dependencies
 
 ```bash
 pio run -t clean
 pio run
 ```
 
-- Sicherstellen, dass Internetzugriff fuer `lib_deps` vorhanden ist.
+Also ensure internet access is available for resolving `lib_deps`.
 
-### Keine REST-Erreichbarkeit
+### REST API not reachable
 
-- Serielle Logs auf `ETH got IP` pruefen.
-- IP aus Log verwenden.
-- Bei `security.enabled=true` Auth-Header mitsenden.
+- Check serial logs for `ETH got IP`.
+- Use the IP shown in logs.
+- If security is enabled, send valid auth headers.
 
-### `/api/v1/health` ist `degraded`
+### `/api/v1/health` returns `degraded`
 
-- Erwartbar, wenn `mqtt.enabled=true` und Broker nicht verbunden ist.
-- Broker/Netzwerkdaten in `mqtt.*` pruefen.
+- Expected when `mqtt.enabled=true` but broker is disconnected.
+- Verify broker reachability and `mqtt.*` config.
 
-### OTA Endpoint nicht verfuegbar
+### OTA endpoint not available
 
-- Pruefen, ob alle OTA-Voraussetzungen gesetzt sind (`ota.enabled`, `allowInsecureHttp`, `security.enabled`, `restToken`).
+Check all OTA prerequisites:
 
-### Keine Sensorwerte
+- `ota.enabled`
+- `ota.allowInsecureHttp`
+- `security.enabled`
+- `security.restToken`
 
-- DS18B20 Verdrahtung/Pull-up pruefen.
-- 1-Wire auf GPIO17.
-- Log meldet `no DS18B20 found`, wenn keine Geraete erkannt wurden.
+### No sensor data
 
-## Entwicklung
+- Verify DS18B20 wiring and pull-up resistor.
+- Confirm 1-Wire line is connected to GPIO17.
+- If discovery fails, logs report `no DS18B20 found`.
 
-### Relevante Dateien
+## Development
 
-- [`src/main.cpp`](src/main.cpp): Boot + Loop + Modulverdrahtung
-- [`src/RestServer.cpp`](src/RestServer.cpp): REST API inkl. OTA Upload
-- [`src/MqttClientManager.cpp`](src/MqttClientManager.cpp): MQTT + Reconnect + Buffer
-- [`src/SensorManager.cpp`](src/SensorManager.cpp): DS18B20 Mess-State-Machine
-- [`src/OtaHealthManager.cpp`](src/OtaHealthManager.cpp): OTA Health-Confirm / Rollback-Logik
-- [`config.example.json`](config.example.json): Konfigurationsvorlage
-- [`SMOKETEST.md`](SMOKETEST.md): Testcheckliste
+### Key Files
 
-### Nützliche Befehle
+- [`src/main.cpp`](src/main.cpp): boot sequence, runtime loop, module wiring
+- [`src/RestServer.cpp`](src/RestServer.cpp): REST endpoints and OTA upload handling
+- [`src/MqttClientManager.cpp`](src/MqttClientManager.cpp): MQTT connection, buffering, publishing
+- [`src/SensorManager.cpp`](src/SensorManager.cpp): DS18B20 measurement state machine
+- [`src/OtaHealthManager.cpp`](src/OtaHealthManager.cpp): OTA health-confirm and rollback logic
+- [`config.example.json`](config.example.json): config template
+- [`SMOKETEST.md`](SMOKETEST.md): hardware smoke-test checklist
+
+### Useful Commands
 
 ```bash
 pio run
@@ -345,6 +358,6 @@ pio run -t upload
 pio device monitor
 ```
 
-## Lizenz
+## License
 
-Aktuell ist keine Lizenzdatei hinterlegt. Fuer ein oeffentliches Repository sollte eine passende `LICENSE` ergaenzt werden.
+No license file is currently included. For a public repository, add a suitable `LICENSE`.
