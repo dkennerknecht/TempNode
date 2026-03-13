@@ -1,10 +1,8 @@
 <div align="center">
-  <img src="ESP32-S3-ETH.jpg" alt="Waveshare ESP32-S3-ETH board" width="860" />
+  <h1>TempNode</h1>
 
-  # TempNode
-
-  **Ethernet-first DS18B20 telemetry node for Waveshare ESP32-S3-ETH**  
-  REST API | MQTT | SD Logging | Watchdog | Secure OTA
+  <p><strong>Ethernet-first DS18B20 telemetry node for Waveshare ESP32-S3-ETH</strong></p>
+  <p>REST API | MQTT | SD Logging | Watchdog | Secure OTA</p>
 
   ![PlatformIO](https://img.shields.io/badge/PlatformIO-ESP32--S3-orange?logo=platformio)
   ![Framework](https://img.shields.io/badge/Framework-Arduino-blue)
@@ -69,6 +67,8 @@ It reads DS18B20 sensors, exposes data over REST, publishes to MQTT, stores logs
 Note: A pre-build script (`scripts/patch_onewire.py`) patches the locally installed OneWire source to silence a known warning pattern.
 
 ## Hardware and Pinout
+
+![Waveshare ESP32-S3-ETH board](ESP32-S3-ETH.jpg)
 
 ### Target Board
 
