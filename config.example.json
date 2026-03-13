@@ -24,8 +24,8 @@
   "history": {
     "enabled": true,
     "path": "/history.jsonl",
-    "flushIntervalMs": 1000,
-    "retentionDays": 0
+    "flushIntervalMs": 2000,
+    "retentionDays": 30
   },
   "metrics": {
     "enabled": true
