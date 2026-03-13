@@ -19,6 +19,7 @@ private:
   AppConfig _cfg;
 
   void applyDefaults();
+  void syncFeatureFlags();
   bool parseJson(const String& json);
   bool validate();
 };

@@ -1,4 +1,5 @@
 #include "TimeManager.h"
+#include "StatsManager.h"
 #include <time.h>
 
 void TimeManager::begin(const char* tz) {
@@ -38,6 +39,10 @@ void TimeManager::loop() {
     _ntpRequested = false;
     _ntpAttempts = 0;
     return;
+  }
+
+  if (_stats) {
+    _stats->incrementNtpSyncFails();
   }
 
   // backoff: 1s,2s,4s,8s.. max 60s

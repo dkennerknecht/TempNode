@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <ESPAsyncWebServer.h>
 #include <array>
+#include <mbedtls/sha256.h>
 
 class LogManager;
 class TimeManager;
@@ -41,8 +42,13 @@ private:
   size_t _otaExpectedBytes = 0;
   size_t _otaReceivedBytes = 0;
   size_t _otaHeaderBytes = 0;
+  bool _otaMd5ExpectedSet = false;
+  bool _otaSha256ExpectedSet = false;
+  bool _otaSha256Active = false;
   String _otaRejectReason = "";
   std::array<uint8_t, 512> _otaHeaderBuf{};
+  std::array<uint8_t, 32> _otaSha256Expected{};
+  mbedtls_sha256_context _otaSha256Ctx{};
 
   bool authOk(AsyncWebServerRequest* req) const;
   void resetOtaState();

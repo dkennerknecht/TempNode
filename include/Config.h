@@ -35,6 +35,7 @@ struct OtaConfig {
   bool enabled = false;
   bool allowInsecureHttp = false;   // explicit opt-in: REST server is plain HTTP
   bool allowDowngrade = false;      // reject same/older app version by default
+  bool requireHashHeader = true;    // require X-OTA-SHA256 or X-OTA-MD5
   uint32_t healthConfirmMs = 30000; // confirm new image after stable runtime
   bool requireNetworkForConfirm = true;
 };

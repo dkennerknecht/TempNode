@@ -7,66 +7,45 @@
 #include "HistoryManager.h"
 #include "StatsManager.h"
 #include "MqttClientManager.h"
+#include "TempNodeCore.h"
 #include <ArduinoJson.h>
 #include <Update.h>
 #include <esp_app_desc.h>
 #include <esp_app_format.h>
 #include <esp_ota_ops.h>
-#include <cctype>
 #include <cstring>
 
 static const char* timeSourceStr(uint8_t src) {
   return (src == 0) ? "NTP" : "UPTIME";
 }
 
-static size_t parseVersionParts(const char* s, int* out, size_t maxParts) {
-  size_t count = 0;
-  const char* p = s;
-
-  while (*p && count < maxParts) {
-    while (*p && !isdigit((unsigned char)*p)) p++;
-    if (!*p) break;
-
-    int v = 0;
-    while (*p && isdigit((unsigned char)*p)) {
-      v = (v * 10) + (*p - '0');
-      p++;
-    }
-    out[count++] = v;
+static String bytesToHex(const uint8_t* data, size_t len) {
+  static const char* hex = "0123456789abcdef";
+  String out;
+  out.reserve(len * 2);
+  for (size_t i = 0; i < len; i++) {
+    uint8_t b = data[i];
+    out += hex[(b >> 4) & 0x0F];
+    out += hex[b & 0x0F];
   }
-  return count;
-}
-
-static int compareVersions(const char* a, const char* b) {
-  int pa[8] = {0};
-  int pb[8] = {0};
-
-  size_t ca = parseVersionParts(a, pa, 8);
-  size_t cb = parseVersionParts(b, pb, 8);
-
-  if (ca == 0 || cb == 0) {
-    int c = strcmp(a, b);
-    return (c < 0) ? -1 : ((c > 0) ? 1 : 0);
-  }
-
-  size_t n = (ca > cb) ? ca : cb;
-  for (size_t i = 0; i < n; i++) {
-    int va = (i < ca) ? pa[i] : 0;
-    int vb = (i < cb) ? pb[i] : 0;
-    if (va < vb) return -1;
-    if (va > vb) return 1;
-  }
-  return 0;
+  return out;
 }
 
 void RestServer::resetOtaState() {
+  if (_otaSha256Active) {
+    mbedtls_sha256_free(&_otaSha256Ctx);
+    _otaSha256Active = false;
+  }
   _otaRejected = false;
   _otaVersionChecked = false;
   _otaExpectedBytes = 0;
   _otaReceivedBytes = 0;
   _otaHeaderBytes = 0;
+  _otaMd5ExpectedSet = false;
+  _otaSha256ExpectedSet = false;
   _otaRejectReason = "";
   _otaHeaderBuf.fill(0);
+  _otaSha256Expected.fill(0);
 }
 
 bool RestServer::otaPrecheck(AsyncWebServerRequest* req, const String& filename) {
@@ -109,13 +88,37 @@ bool RestServer::otaPrecheck(AsyncWebServerRequest* req, const String& filename)
     return false;
   }
 
-  // Optional integrity check
+  bool hashHeaderProvided = false;
+
+  // Optional legacy integrity check
   if (req->hasHeader("X-OTA-MD5")) {
     String md5 = req->getHeader("X-OTA-MD5")->value();
     if (!Update.setMD5(md5.c_str())) {
       _otaRejectReason = "invalid X-OTA-MD5 header";
       return false;
     }
+    _otaMd5ExpectedSet = true;
+    hashHeaderProvided = true;
+  }
+
+  // Recommended integrity check
+  if (req->hasHeader("X-OTA-SHA256")) {
+    String sha256 = req->getHeader("X-OTA-SHA256")->value();
+    if (!tempnode::parseHexDigest(sha256.c_str(), _otaSha256Expected.data(), _otaSha256Expected.size())) {
+      _otaRejectReason = "invalid X-OTA-SHA256 header";
+      return false;
+    }
+
+    mbedtls_sha256_init(&_otaSha256Ctx);
+    mbedtls_sha256_starts(&_otaSha256Ctx, 0);
+    _otaSha256Active = true;
+    _otaSha256ExpectedSet = true;
+    hashHeaderProvided = true;
+  }
+
+  if (_cfg->ota.requireHashHeader && !hashHeaderProvided) {
+    _otaRejectReason = "missing OTA hash header (X-OTA-SHA256 or X-OTA-MD5)";
+    return false;
   }
 
   _otaExpectedBytes = contentLen;
@@ -128,7 +131,8 @@ bool RestServer::otaPrecheck(AsyncWebServerRequest* req, const String& filename)
     return false;
   }
 
-  _log->warn(String("OTA precheck ok: target=") + target->label + " size=" + String((unsigned)contentLen));
+  String integrity = _otaSha256ExpectedSet ? "sha256" : (_otaMd5ExpectedSet ? "md5" : "none");
+  _log->warn(String("OTA precheck ok: target=") + target->label + " size=" + String((unsigned)contentLen) + " hash=" + integrity);
   return true;
 }
 
@@ -167,7 +171,7 @@ bool RestServer::otaCheckVersionChunk(const uint8_t* data, size_t len) {
   }
 
   if (!_cfg->ota.allowDowngrade) {
-    int cmp = compareVersions(newVer, curVer);
+    int cmp = tempnode::compareVersionStrings(newVer, curVer);
     if (cmp <= 0) {
       _otaRejectReason = String("incoming version ") + newVer + " <= current " + curVer;
       return false;
@@ -289,22 +293,10 @@ void RestServer::setupRoutes() {
     sendJson(req, doc);
   });
 
-  // Update sensor poll interval at runtime
-    // Get or set sensors interval (query param):
-  //   GET /api/v1/sensors/interval           -> returns current interval
-  //   GET /api/v1/sensors/interval?intervalMs=10000 -> sets + returns
-  
-  // Sensors interval GET/SET via query string
+  // Read sensor poll interval at runtime
   _srv->on("/api/v1/sensors/interval", HTTP_GET, [this](AsyncWebServerRequest* req) {
     if (!authOk(req)) return;
     if (!_sensors) return sendError(req, 500, "sensors unavailable");
-
-    // ?intervalMs=10000
-    if (req->hasParam("intervalMs")) {
-      const AsyncWebParameter* p = req->getParam("intervalMs");
-      uint32_t ms = (uint32_t)p->value().toInt();
-      if (ms > 0) _sensors->setIntervalMs(ms);
-    }
 
     JsonDocument doc;
     doc["intervalMs"] = _sensors->intervalMs();
@@ -322,8 +314,8 @@ void RestServer::setupRoutes() {
   });
 
 
-  // Sensors interval POST (form, json, or query)
-  _srv->on("/api/v1/sensors/interval", HTTP_POST, [this](AsyncWebServerRequest* req) {
+  // Sensors interval write endpoint (form, JSON body, or query)
+  auto setIntervalHandler = [this](AsyncWebServerRequest* req) {
     if (!authOk(req)) return;
     if (!_sensors) return sendError(req, 500, "sensors unavailable");
 
@@ -356,7 +348,10 @@ void RestServer::setupRoutes() {
     doc["intervalMs"] = _sensors->intervalMs();
     doc["ok"] = true;
     sendJson(req, doc);
-  });
+  };
+
+  _srv->on("/api/v1/sensors/interval", HTTP_POST, setIntervalHandler);
+  _srv->on("/api/v1/sensors/interval", HTTP_PUT, setIntervalHandler);
   _srv->on("/api/v1/system", HTTP_GET, [this](AsyncWebServerRequest* req) {
     if (!authOk(req)) return;
     JsonDocument doc;
@@ -457,10 +452,25 @@ void RestServer::setupRoutes() {
               err = "OTA precheck not initialized";
             } else if (_otaReceivedBytes != _otaExpectedBytes) {
               err = String("OTA size mismatch: got ") + (unsigned)_otaReceivedBytes + ", expected " + (unsigned)_otaExpectedBytes;
-            } else if (Update.end(false)) {
-              ok = true;
             } else {
-              err = String("Update.end failed: ") + Update.errorString();
+              if (_otaSha256ExpectedSet && _otaSha256Active) {
+                uint8_t computed[32] = {0};
+                mbedtls_sha256_finish(&_otaSha256Ctx, computed);
+                if (memcmp(computed, _otaSha256Expected.data(), _otaSha256Expected.size()) != 0) {
+                  err = String("SHA-256 mismatch: expected ") + bytesToHex(_otaSha256Expected.data(), _otaSha256Expected.size()) +
+                        ", got " + bytesToHex(computed, sizeof(computed));
+                }
+                mbedtls_sha256_free(&_otaSha256Ctx);
+                _otaSha256Active = false;
+              }
+
+              if (!err.length()) {
+                if (Update.end(false)) {
+                  ok = true;
+                } else {
+                  err = String("Update.end failed: ") + Update.errorString();
+                }
+              }
             }
           } else if (!err.length()) {
             err = Update.hasError() ? String(Update.errorString()) : "upload rejected";
@@ -508,6 +518,10 @@ void RestServer::setupRoutes() {
             _log->error(String("OTA version check failed: ") + _otaRejectReason);
             if (Update.isRunning()) Update.abort();
             return;
+          }
+
+          if (_otaSha256Active) {
+            mbedtls_sha256_update(&_otaSha256Ctx, data, len);
           }
 
           if (!Update.hasError()) {

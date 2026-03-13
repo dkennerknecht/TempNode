@@ -1,6 +1,8 @@
 #pragma once
 #include <Arduino.h>
 
+class StatsManager;
+
 enum class TimeSource : uint8_t { NTP = 0, UPTIME = 1 };
 
 struct TimeStamp {
@@ -14,6 +16,7 @@ class TimeManager {
 public:
   void begin(const char* tz = "CET-1CEST,M3.5.0/2,M10.5.0/3");
   void loop();
+  void setStats(StatsManager* stats) { _stats = stats; }
 
   void requestNtpSync();
   bool timeValid() const { return _timeValid; }
@@ -35,6 +38,7 @@ private:
   bool _ntpRequested = false;
   uint32_t _ntpNextTryMs = 0;
   uint8_t _ntpAttempts = 0;
+  StatsManager* _stats = nullptr;
 
   void _applyTimeValid();
 };

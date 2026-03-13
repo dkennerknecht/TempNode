@@ -55,6 +55,7 @@ Erwartung:
 NODE_IP=192.168.1.50
 curl -sS "http://$NODE_IP/api/v1/sensors/interval"
 curl -sS -X POST "http://$NODE_IP/api/v1/sensors/interval" -d "intervalMs=2000"
+curl -sS -X PUT "http://$NODE_IP/api/v1/sensors/interval" -H "Content-Type: application/json" -d '{"intervalMs":5000}'
 curl -sS "http://$NODE_IP/api/v1/sensors/interval"
 ```
 
@@ -125,6 +126,7 @@ Nach Reboot:
 Voraussetzungen in `/config.json`:
 - `ota.enabled=true`
 - `ota.allowInsecureHttp=true` (expliziter Opt-in)
+- `ota.requireHashHeader=true` (Default)
 - `security.enabled=true`
 - `security.restToken` gesetzt
 
@@ -132,7 +134,9 @@ Upload-Test:
 ```bash
 NODE_IP=192.168.1.50
 TOKEN=<token>
+SHA256=$(shasum -a 256 .pio/build/esp32s3/firmware.bin | awk '{print $1}')
 curl -i -H "Authorization: Bearer $TOKEN" \
+     -H "X-OTA-SHA256: $SHA256" \
      -F "firmware=@.pio/build/esp32s3/firmware.bin" \
      "http://$NODE_IP/api/v1/ota"
 ```

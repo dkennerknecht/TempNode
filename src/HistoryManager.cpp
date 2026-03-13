@@ -5,11 +5,108 @@
 #include "Config.h"
 #include "SensorManager.h"
 #include "SharedSdMutex.h"
+#include "TempNodeCore.h"
 #include <SD.h>
 
 struct HistoryItem {
   char line[256];
 };
+
+static constexpr size_t kHistoryBatchMax = 32;
+static constexpr uint32_t kRetentionCheckMs = 3600000UL; // hourly
+
+static bool isLikelyEpochMs(uint64_t tsMs) {
+  // 2000-01-01 00:00:00 UTC in ms
+  return tsMs >= 946684800000ULL;
+}
+
+static bool writeBatchLocked(const HistoryConfig& cfg, const std::vector<HistoryItem>& pending) {
+  if (pending.empty()) return true;
+
+  File f = SD.open(cfg.path, FILE_APPEND);
+  if (!f) return false;
+
+  bool ok = true;
+  for (const auto& it : pending) {
+    if (f.println(it.line) == 0) {
+      ok = false;
+      break;
+    }
+  }
+  if (ok) f.flush();
+  f.close();
+  return ok;
+}
+
+static bool applyRetentionLocked(const HistoryConfig& cfg, TimeManager& tm, LogManager& log) {
+  if (cfg.retentionDays == 0) return true;
+  if (!SD.exists(cfg.path)) return true;
+
+  TimeStamp now = tm.now();
+  if (!now.valid) return true;
+
+  const uint64_t retentionMs = (uint64_t)cfg.retentionDays * 24ULL * 60ULL * 60ULL * 1000ULL;
+  if (now.epochMs <= retentionMs) return true;
+  const uint64_t cutoff = now.epochMs - retentionMs;
+
+  File in = SD.open(cfg.path, FILE_READ);
+  if (!in) return false;
+
+  String tmpPath = cfg.path + ".tmp";
+  File out = SD.open(tmpPath, FILE_WRITE);
+  if (!out) {
+    in.close();
+    return false;
+  }
+
+  size_t kept = 0;
+  size_t dropped = 0;
+
+  while (in.available()) {
+    String line = in.readStringUntil('\n');
+    line.trim();
+    if (!line.length()) continue;
+
+    bool keep = true;
+    uint64_t tsMs = 0;
+    if (tempnode::parseHistoryTimestampMs(line.c_str(), tsMs)) {
+      // Only prune entries with valid epoch timestamps.
+      if (isLikelyEpochMs(tsMs) && tsMs < cutoff) {
+        keep = false;
+      }
+    }
+
+    if (keep) {
+      if (out.println(line) == 0) {
+        out.close();
+        in.close();
+        SD.remove(tmpPath);
+        return false;
+      }
+      kept++;
+    } else {
+      dropped++;
+    }
+  }
+
+  out.flush();
+  out.close();
+  in.close();
+
+  if (dropped == 0) {
+    SD.remove(tmpPath);
+    return true;
+  }
+
+  SD.remove(cfg.path);
+  if (!SD.rename(tmpPath, cfg.path)) {
+    SD.remove(tmpPath);
+    return false;
+  }
+
+  log.info(String("history retention pruned lines: ") + (unsigned)dropped + ", kept: " + (unsigned)kept);
+  return true;
+}
 
 void HistoryManager::begin(const HistoryConfig& cfg, LogManager& log, StatsManager& stats, TimeManager& tm, bool sdAvailable) {
   _cfg = &cfg;
@@ -55,31 +152,59 @@ void HistoryManager::taskTrampoline(void* arg) {
 }
 
 void HistoryManager::taskMain() {
+  std::vector<HistoryItem> pending;
+  pending.reserve(kHistoryBatchMax);
+
+  uint32_t flushIntervalMs = _cfg->flushIntervalMs;
+  uint32_t nextFlushMs = millis() + (flushIntervalMs == 0 ? 1 : flushIntervalMs);
+  uint32_t nextRetentionMs = millis() + 60000UL; // first check after one minute
+
   for (;;) {
     HistoryItem it{};
-    if (xQueueReceive(_queue, &it, pdMS_TO_TICKS(200)) != pdTRUE) continue;
-
-    if (!_sdAvailable) continue;
-
-    if (xSemaphoreTake(_sdMutex, pdMS_TO_TICKS(50)) != pdTRUE) {
-      _stats->incrementSdWriteFails();
-      continue;
+    TickType_t waitTicks = pdMS_TO_TICKS(200);
+    uint32_t now = millis();
+    if (!pending.empty() && flushIntervalMs > 0) {
+      int32_t remain = (int32_t)(nextFlushMs - now);
+      if (remain < 0) remain = 0;
+      if ((uint32_t)remain < 200) waitTicks = pdMS_TO_TICKS((uint32_t)remain);
     }
 
-    bool ok = false;
-    do {
-      File f = SD.open(_cfg->path, FILE_APPEND);
-      if (!f) break;
-      size_t n = f.println(it.line);
-      f.flush();
-      f.close();
-      ok = (n > 0);
-    } while (0);
+    if (xQueueReceive(_queue, &it, waitTicks) == pdTRUE) {
+      if (_sdAvailable && _cfg->enabled && !_paused) {
+        pending.push_back(it);
+      }
+    }
 
-    xSemaphoreGive(_sdMutex);
+    now = millis();
+    flushIntervalMs = _cfg->flushIntervalMs;
+    bool flushDue = !pending.empty() &&
+                    (flushIntervalMs == 0 ||
+                     (int32_t)(now - nextFlushMs) >= 0 ||
+                     pending.size() >= kHistoryBatchMax);
 
-    if (!ok) {
-      _stats->incrementSdWriteFails();
+    if (flushDue && _sdAvailable) {
+      if (xSemaphoreTake(_sdMutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        _stats->incrementSdWriteFails();
+      } else {
+        if (!writeBatchLocked(*_cfg, pending)) {
+          _stats->incrementSdWriteFails();
+        }
+        xSemaphoreGive(_sdMutex);
+      }
+      pending.clear();
+      nextFlushMs = now + (flushIntervalMs == 0 ? 1 : flushIntervalMs);
+    }
+
+    if (_cfg->retentionDays > 0 && _sdAvailable && (int32_t)(now - nextRetentionMs) >= 0) {
+      if (xSemaphoreTake(_sdMutex, pdMS_TO_TICKS(250)) != pdTRUE) {
+        _stats->incrementSdWriteFails();
+      } else {
+        if (!applyRetentionLocked(*_cfg, *_tm, *_log)) {
+          _stats->incrementSdWriteFails();
+        }
+        xSemaphoreGive(_sdMutex);
+      }
+      nextRetentionMs = now + kRetentionCheckMs;
     }
   }
 }

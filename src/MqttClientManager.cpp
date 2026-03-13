@@ -31,10 +31,9 @@ void MqttClientManager::begin(const AppConfig& cfg, AppNetworkManager& net, LogM
     _pass = "";
   }
 
-  // marvinroger/AsyncMqttClient@0.9.0 (the lib used here) does not provide setSecure().
-  // So TLS cannot be enabled without switching libraries/build flags.
   if (_tls) {
-    _log->warn("MQTT TLS requested but AsyncMqttClient has no TLS support in this build (ASYNC_TCP_SSL_ENABLED=0). Using plain MQTT.");
+    _log->error("MQTT TLS requested, but this AsyncMqttClient build has no TLS support. MQTT stays disabled (no plaintext fallback).");
+    return;
   }
   _mqtt.setClientId(_clientId.c_str());
   _mqtt.setServer(_host.c_str(), cfg.mqtt.port);
@@ -196,8 +195,7 @@ void MqttClientManager::publishSensor(const SensorReading& r) {
   }
 }
 
-void MqttClientManager::publishSystem(bool force) {
-  (void)force;
+void MqttClientManager::publishSystem() {
   if (!_cfg) return;
   if (!_cfg->mqtt.enabled) return;
   if (!_connected) return;

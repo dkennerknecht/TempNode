@@ -167,8 +167,8 @@ If `security.enabled=true`, endpoints require authentication.
 | GET | `/temps` | Latest readings for all discovered sensors |
 | GET | `/sensors` | Sensor summary plus current `intervalMs` |
 | GET | `/sensors/interval` | Read current sensor interval |
-| GET | `/sensors/interval?intervalMs=...` | Set interval and return updated state |
 | POST | `/sensors/interval` | Set interval via query, form, or JSON body |
+| PUT | `/sensors/interval` | Same as POST; semantic update endpoint |
 | GET | `/system` | System diagnostics (IP, heap, uptime, chip, boot stats) |
 | GET | `/metrics` | Runtime metrics + persistent stats |
 | GET | `/history?sensor=<id>&limit=<n>` | Tail history entries as JSON array (`limit` 1..1000) |
@@ -233,7 +233,7 @@ Default (`baseTopic = device`):
 }
 ```
 
-Note: In the current build, MQTT TLS is not active (`ASYNC_TCP_SSL_ENABLED=0`, and this AsyncMqttClient version does not expose `setSecure()`).
+Note: In the current build, MQTT TLS is not supported by the selected client stack. If `mqtt.tls=true`, MQTT is disabled (fail-closed, no plaintext fallback).
 
 ## OTA Update
 
@@ -245,6 +245,7 @@ In `/config.json`:
 - `ota.allowInsecureHttp = true` (explicit opt-in because REST server is plain HTTP)
 - `security.enabled = true`
 - `security.restToken` configured
+- `ota.requireHashHeader = true` (default; requires upload hash header)
 
 ### Validation and Safety Rules
 
@@ -252,7 +253,7 @@ In `/config.json`:
 - Firmware filename must end in `.bin`.
 - `Content-Length` must be present.
 - Firmware size is checked against OTA target partition.
-- Optional integrity check via `X-OTA-MD5` header.
+- Integrity header is required by default: `X-OTA-SHA256` (recommended) or `X-OTA-MD5` (legacy).
 - By default, downgrade or same-version uploads are rejected (`ota.allowDowngrade=false`).
 
 ### Upload Example
@@ -260,9 +261,11 @@ In `/config.json`:
 ```bash
 NODE_IP=192.168.1.50
 TOKEN="<your-token>"
+SHA256="$(shasum -a 256 .pio/build/esp32s3/firmware.bin | awk '{print $1}')"
 
 curl -i \
   -H "Authorization: Bearer $TOKEN" \
+  -H "X-OTA-SHA256: $SHA256" \
   -F "firmware=@.pio/build/esp32s3/firmware.bin" \
   "http://$NODE_IP/api/v1/ota"
 ```

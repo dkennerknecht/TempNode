@@ -25,7 +25,7 @@ public:
 
   bool connected() const { return _connected; }
   void publishSensor(const SensorReading& r);
-  void publishSystem(bool force=false);
+  void publishSystem();
   void publishStatus(const char* status, bool retain=true);
 
 private:

@@ -20,6 +20,10 @@ void ConfigManager::begin(LogManager& log) {
 
 void ConfigManager::applyDefaults() {
   _cfg = AppConfig{};
+  syncFeatureFlags();
+}
+
+void ConfigManager::syncFeatureFlags() {
   _cfg.restEnabled = _cfg.rest.enabled;
   _cfg.mqttEnabled = _cfg.mqtt.enabled;
   _cfg.securityEnabled = _cfg.security.enabled;
@@ -52,6 +56,7 @@ bool ConfigManager::parseJson(const String& json) {
   _cfg.ota.enabled     = doc["ota"]["enabled"]     | _cfg.ota.enabled;
   _cfg.ota.allowInsecureHttp = doc["ota"]["allowInsecureHttp"] | _cfg.ota.allowInsecureHttp;
   _cfg.ota.allowDowngrade = doc["ota"]["allowDowngrade"] | _cfg.ota.allowDowngrade;
+  _cfg.ota.requireHashHeader = doc["ota"]["requireHashHeader"] | _cfg.ota.requireHashHeader;
   _cfg.ota.healthConfirmMs = doc["ota"]["healthConfirmMs"] | _cfg.ota.healthConfirmMs;
   _cfg.ota.requireNetworkForConfirm = doc["ota"]["requireNetworkForConfirm"] | _cfg.ota.requireNetworkForConfirm;
   _cfg.metrics.enabled = doc["metrics"]["enabled"] | _cfg.metrics.enabled;
@@ -101,15 +106,9 @@ bool ConfigManager::parseJson(const String& json) {
   _cfg.security.mqttUser = String((const char*)(doc["security"]["mqttUser"] | _cfg.security.mqttUser.c_str()));
   _cfg.security.mqttPass = String((const char*)(doc["security"]["mqttPass"] | _cfg.security.mqttPass.c_str()));
 
-  // Derived flags
-  _cfg.restEnabled = _cfg.rest.enabled;
-  _cfg.mqttEnabled = _cfg.mqtt.enabled;
-  _cfg.securityEnabled = _cfg.security.enabled;
-  _cfg.otaEnabled = _cfg.ota.enabled;
-  _cfg.metricsEnabled = _cfg.metrics.enabled;
-  _cfg.historyEnabled = _cfg.history.enabled;
-
-  return validate();
+  bool valid = validate();
+  syncFeatureFlags();
+  return valid;
 }
 
 bool ConfigManager::validate() {
@@ -118,22 +117,40 @@ bool ConfigManager::validate() {
   if (_cfg.sensors.resolutionBits < 9 || _cfg.sensors.resolutionBits > 12) {
     _log->warn("config: sensors.resolutionBits out of range (9..12), forcing 12");
     _cfg.sensors.resolutionBits = 12;
-    ok = false;
   }
 
   if (_cfg.sensors.intervalMs < 500) {
     _log->warn("config: sensors.intervalMs too low, forcing 500ms");
     _cfg.sensors.intervalMs = 500;
-    ok = false;
+  }
+
+  if (_cfg.sensors.conversionTimeoutMs < 50) {
+    _log->warn("config: sensors.conversionTimeoutMs too low, forcing 50ms");
+    _cfg.sensors.conversionTimeoutMs = 50;
   }
 
   if (_cfg.mqtt.reconnectMinMs < 250) _cfg.mqtt.reconnectMinMs = 250;
   if (_cfg.mqtt.reconnectMaxMs < _cfg.mqtt.reconnectMinMs) _cfg.mqtt.reconnectMaxMs = _cfg.mqtt.reconnectMinMs;
 
+  if (_cfg.mqtt.enabled && _cfg.mqtt.tls) {
+    _log->warn("config: mqtt.tls=true requested but unsupported by current MQTT client build. MQTT will be disabled to avoid insecure fallback.");
+    _cfg.mqtt.enabled = false;
+  }
+
   if (_cfg.rest.port == 0) _cfg.rest.port = 80;
 
   if (_cfg.ota.healthConfirmMs < 5000) {
     _cfg.ota.healthConfirmMs = 5000;
+  }
+
+  if (_cfg.history.flushIntervalMs > 60000) {
+    _log->warn("config: history.flushIntervalMs too high, forcing 60000ms");
+    _cfg.history.flushIntervalMs = 60000;
+  }
+
+  if (_cfg.history.retentionDays > 3650) {
+    _log->warn("config: history.retentionDays too high, forcing 3650 days");
+    _cfg.history.retentionDays = 3650;
   }
 
   if (_cfg.security.enabled) {
@@ -157,6 +174,9 @@ bool ConfigManager::validate() {
     }
     if (!_cfg.ota.allowInsecureHttp) {
       _log->warn("config: OTA insecure HTTP not allowed. Set ota.allowInsecureHttp=true to enable OTA endpoint.");
+    }
+    if (!_cfg.ota.requireHashHeader) {
+      _log->warn("config: ota.requireHashHeader=false lowers OTA integrity guarantees.");
     }
   }
 

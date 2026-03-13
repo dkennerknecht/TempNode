@@ -83,6 +83,7 @@ void setup() {
 
   // stats early (SD availability later)
   g_stats.begin(false);
+  g_time.setStats(&g_stats);
   String resetReason = resetReasonStr();
 
   // logger (serial always) - SD availability later
