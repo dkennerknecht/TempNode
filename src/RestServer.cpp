@@ -313,6 +313,18 @@ void RestServer::setupRoutes() {
     mqtt["ok"] = mqttOk;
     mqtt["host"] = _cfg->mqtt.host;
     mqtt["port"] = _cfg->mqtt.port;
+    mqtt["user"] = _mqtt->authUserLabel();
+    mqtt["connectAttempts"] = _mqtt->connectAttempts();
+    mqtt["diagLastUptimeMs"] = (uint64_t)_mqtt->lastDiagUptimeMs();
+    mqtt["resolveOk"] = _mqtt->lastResolveOk();
+    mqtt["resolvedIp"] = _mqtt->lastResolvedIp();
+    mqtt["pingOk"] = _mqtt->lastPingOk();
+    mqtt["pingMs"] = (uint64_t)_mqtt->lastPingMs();
+    mqtt["tcpProbePort"] = _mqtt->lastTcpProbePort();
+    mqtt["tcpProbeOpen"] = _mqtt->lastTcpProbeOpen();
+    mqtt["altPortChecked"] = _mqtt->lastAltPortChecked();
+    mqtt["altPort"] = _mqtt->lastAltPort();
+    mqtt["altPortOpen"] = _mqtt->lastAltPortOpen();
 
     JsonObject sd = checks["sd"].to<JsonObject>();
     sd["required"] = sdRequired;

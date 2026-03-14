@@ -6,6 +6,9 @@
 #include "TimeManager.h"
 #include "SensorManager.h"
 #include <ArduinoJson.h>
+#include <NetworkClient.h>
+#include <WiFi.h>
+#include <ping/ping_sock.h>
 
 static const char* mqttDisconnectReasonName(AsyncMqttClientDisconnectReason reason) {
   switch (reason) {
@@ -21,6 +24,34 @@ static const char* mqttDisconnectReasonName(AsyncMqttClientDisconnectReason reas
   }
 }
 
+struct PingOnceCtx {
+  volatile bool done = false;
+  volatile bool success = false;
+  volatile uint32_t timeMs = 0;
+};
+
+static void onPingSuccess(esp_ping_handle_t hdl, void* args) {
+  PingOnceCtx* ctx = static_cast<PingOnceCtx*>(args);
+  if (!ctx) return;
+
+  uint32_t rtt = 0;
+  if (esp_ping_get_profile(hdl, ESP_PING_PROF_TIMEGAP, &rtt, sizeof(rtt)) == ESP_OK) {
+    ctx->timeMs = rtt;
+  }
+  ctx->success = true;
+}
+
+static void onPingEnd(esp_ping_handle_t hdl, void* args) {
+  PingOnceCtx* ctx = static_cast<PingOnceCtx*>(args);
+  if (!ctx) return;
+
+  uint32_t replies = 0;
+  if (esp_ping_get_profile(hdl, ESP_PING_PROF_REPLY, &replies, sizeof(replies)) == ESP_OK && replies > 0) {
+    ctx->success = true;
+  }
+  ctx->done = true;
+}
+
 void MqttClientManager::begin(const AppConfig& cfg, AppNetworkManager& net, LogManager& log, StatsManager& stats, TimeManager& tm) {
   _cfg = &cfg;
   _net = &net;
@@ -34,6 +65,7 @@ void MqttClientManager::begin(const AppConfig& cfg, AppNetworkManager& net, LogM
   // Keep all strings alive (AsyncMqttClient may keep pointers)
   _tls = cfg.mqtt.tls;
   _host = cfg.mqtt.host;
+  _port = cfg.mqtt.port;
   if (cfg.mqtt.clientId.length()) {
     _clientId = cfg.mqtt.clientId;
   } else {
@@ -59,8 +91,8 @@ void MqttClientManager::begin(const AppConfig& cfg, AppNetworkManager& net, LogM
     return;
   }
   _mqtt.setClientId(_clientId.c_str());
-  _mqtt.setServer(_host.c_str(), cfg.mqtt.port);
-  _log->info(String("MQTT target: ") + _host + ":" + String(cfg.mqtt.port) + " clientId=" + _clientId);
+  _mqtt.setServer(_host.c_str(), _port);
+  _log->info(String("MQTT target: ") + _host + ":" + String(_port) + " clientId=" + _clientId);
 
   if (_user.length()) {
     _log->info("MQTT auth: username configured");
@@ -105,6 +137,104 @@ void MqttClientManager::begin(const AppConfig& cfg, AppNetworkManager& net, LogM
   });
 
   scheduleReconnect();
+}
+
+String MqttClientManager::authUserLabel() const {
+  if (_user.length()) return _user;
+  return "<anonymous>";
+}
+
+bool MqttClientManager::resolveHost(IPAddress& out) {
+  if (out.fromString(_host)) return true;
+  return WiFi.hostByName(_host.c_str(), out);
+}
+
+bool MqttClientManager::pingIp(const IPAddress& ip, uint32_t timeoutMs, uint32_t& outRttMs) {
+  outRttMs = 0;
+
+  esp_ping_config_t cfg = ESP_PING_DEFAULT_CONFIG();
+  cfg.count = 1;
+  cfg.timeout_ms = timeoutMs;
+  cfg.interval_ms = 1000;
+  IP_ADDR4(&cfg.target_addr, ip[0], ip[1], ip[2], ip[3]);
+
+  PingOnceCtx ctx{};
+  esp_ping_callbacks_t cbs = {};
+  cbs.cb_args = &ctx;
+  cbs.on_ping_success = onPingSuccess;
+  cbs.on_ping_end = onPingEnd;
+
+  esp_ping_handle_t hdl = nullptr;
+  if (esp_ping_new_session(&cfg, &cbs, &hdl) != ESP_OK || !hdl) {
+    return false;
+  }
+
+  if (esp_ping_start(hdl) != ESP_OK) {
+    esp_ping_delete_session(hdl);
+    return false;
+  }
+
+  const uint32_t waitUntilMs = millis() + timeoutMs + 500;
+  while (!ctx.done && (int32_t)(millis() - waitUntilMs) < 0) {
+    delay(10);
+  }
+
+  esp_ping_stop(hdl);
+  esp_ping_delete_session(hdl);
+
+  outRttMs = ctx.timeMs;
+  return ctx.success;
+}
+
+bool MqttClientManager::tcpProbe(const IPAddress& ip, uint16_t port, uint32_t timeoutMs) {
+  NetworkClient c;
+  const int ok = c.connect(ip, port, (int32_t)timeoutMs);
+  c.stop();
+  return ok == 1;
+}
+
+void MqttClientManager::runConnectivityDiagnostics() {
+  _diagAtUptimeMs = millis();
+  _diagResolveOk = false;
+  _diagResolvedIp = "";
+  _diagPingOk = false;
+  _diagPingMs = 0;
+  _diagTcpOpen = false;
+  _diagTcpPort = _port;
+  _diagAltChecked = false;
+  _diagAltPort = 0;
+  _diagAltOpen = false;
+
+  IPAddress ip;
+  if (!resolveHost(ip)) {
+    _log->warn(String("MQTT diag: DNS/host resolve failed for host=") + _host);
+    return;
+  }
+
+  _diagResolveOk = true;
+  _diagResolvedIp = ip.toString();
+
+  _diagPingOk = pingIp(ip, 1000, _diagPingMs);
+  _diagTcpOpen = tcpProbe(ip, _diagTcpPort, 1000);
+
+  if (_port == 1883 || _port == 8883) {
+    _diagAltChecked = true;
+    _diagAltPort = (_port == 1883) ? 8883 : 1883;
+    _diagAltOpen = tcpProbe(ip, _diagAltPort, 1000);
+  }
+
+  String summary = String("MQTT diag: host=") + _host +
+                   " resolvedIp=" + _diagResolvedIp +
+                   " ping=" + (_diagPingOk ? String(_diagPingMs) + "ms" : String("fail")) +
+                   " tcp/" + String(_diagTcpPort) + "=" + (_diagTcpOpen ? "open" : "closed");
+  if (_diagAltChecked) {
+    summary += String(" tcp/") + _diagAltPort + "=" + (_diagAltOpen ? "open" : "closed");
+  }
+  _log->info(summary);
+
+  if (!_diagTcpOpen) {
+    _log->warn(String("MQTT diag: configured port ") + _diagTcpPort + " appears closed or unreachable from device");
+  }
 }
 
 void MqttClientManager::scheduleReconnect() {
@@ -248,7 +378,13 @@ void MqttClientManager::loop() {
   uint32_t now = millis();
   if (!_connected) {
     if (_net->isUp() && (int32_t)(now - _nextReconnectMs) >= 0) {
-      _log->info("MQTT connecting...");
+      runConnectivityDiagnostics();
+      _connectAttempts++;
+      _log->info(String("MQTT connecting: host=") + _host +
+                 " port=" + String(_port) +
+                 " user=" + authUserLabel() +
+                 " clientId=" + _clientId +
+                 " attempt=" + String(_connectAttempts));
       _mqtt.connect();
       scheduleReconnect();
     }

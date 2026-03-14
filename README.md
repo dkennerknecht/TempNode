@@ -185,7 +185,7 @@ curl -sS "http://$NODE_IP/api/v1/health"
 curl -sS "http://$NODE_IP/api/v1/temps"
 ```
 
-`/health` response now includes per-subsystem detail fields under `checks.*` (for example `checks.network.up`, `checks.mqtt.connected`, `checks.sd.available`, `checks.time.valid`, `checks.ota_state.imageState`).
+`/health` response now includes per-subsystem detail fields under `checks.*` (for example `checks.network.up`, `checks.mqtt.connected`, `checks.mqtt.resolveOk`, `checks.mqtt.tcpProbeOpen`, `checks.sd.available`, `checks.time.valid`, `checks.ota_state.imageState`).
 
 Bearer token:
 
@@ -205,6 +205,7 @@ curl -u api:yourpassword "http://$NODE_IP/api/v1/system"
 Broker authentication is configured via `mqtt.user` and `mqtt.pass`.
 If both are empty, the client attempts anonymous MQTT login.
 Legacy fallback from `security.mqttUser`/`security.mqttPass` is still supported for older configs.
+On reconnect attempts, serial logs include host, port, user, clientId, plus diagnostics (DNS resolve, ping, TCP probe on configured and common alternate MQTT port).
 
 ### Topic Layout
 

@@ -510,14 +510,45 @@
       },
       "HealthMqtt": {
         "type": "object",
-        "required": ["required", "enabled", "connected", "ok", "host", "port"],
+        "required": [
+          "required",
+          "enabled",
+          "connected",
+          "ok",
+          "host",
+          "port",
+          "user",
+          "connectAttempts",
+          "diagLastUptimeMs",
+          "resolveOk",
+          "resolvedIp",
+          "pingOk",
+          "pingMs",
+          "tcpProbePort",
+          "tcpProbeOpen",
+          "altPortChecked",
+          "altPort",
+          "altPortOpen"
+        ],
         "properties": {
           "required": {"type": "boolean"},
           "enabled": {"type": "boolean"},
           "connected": {"type": "boolean"},
           "ok": {"type": "boolean"},
           "host": {"type": "string"},
-          "port": {"type": "integer"}
+          "port": {"type": "integer"},
+          "user": {"type": "string"},
+          "connectAttempts": {"type": "integer"},
+          "diagLastUptimeMs": {"type": "integer"},
+          "resolveOk": {"type": "boolean"},
+          "resolvedIp": {"type": "string"},
+          "pingOk": {"type": "boolean"},
+          "pingMs": {"type": "integer"},
+          "tcpProbePort": {"type": "integer"},
+          "tcpProbeOpen": {"type": "boolean"},
+          "altPortChecked": {"type": "boolean"},
+          "altPort": {"type": "integer"},
+          "altPortOpen": {"type": "boolean"}
         }
       },
       "HealthSd": {
