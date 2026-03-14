@@ -1,82 +1,51 @@
-<div align="center">
-  <h1>TempNode</h1>
+# TempNode
 
-  <p><strong>Ethernet-first DS18B20 telemetry node for Waveshare ESP32-S3-ETH</strong></p>
-  <p>REST API | MQTT | SD Logging | Watchdog | Secure OTA</p>
+> Ethernet-first DS18B20 telemetry node for **Waveshare ESP32-S3-ETH** (ESP32-S3 + W5500).
 
-  ![PlatformIO](https://img.shields.io/badge/PlatformIO-ESP32--S3-orange?logo=platformio)
-  ![Framework](https://img.shields.io/badge/Framework-Arduino-blue)
-  ![Network](https://img.shields.io/badge/Network-W5500%20Ethernet-success)
-  ![OTA](https://img.shields.io/badge/OTA-Token%20Protected-critical)
-</div>
+![PlatformIO](https://img.shields.io/badge/PlatformIO-ESP32--S3-orange?logo=platformio)
+![Framework](https://img.shields.io/badge/Framework-Arduino-blue)
+![Network](https://img.shields.io/badge/Network-W5500%20Ethernet-success)
+![OTA](https://img.shields.io/badge/OTA-Token%20Gated-critical)
 
-TempNode is a production-oriented PlatformIO project (Arduino framework) for an Ethernet-connected temperature node.
-It reads DS18B20 sensors, exposes data over REST, publishes to MQTT, stores logs/history on SD, and supports secured OTA firmware updates.
+TempNode reads DS18B20 sensors, exposes REST endpoints, publishes MQTT telemetry, writes history/logs to SD, and supports guarded OTA updates.
 
-## Table of Contents
+## Contents
 
-- [Overview](#overview)
-- [Tech Stack](#tech-stack)
-- [Hardware and Pinout](#hardware-and-pinout)
+- [Live API Docs](#live-api-docs)
+- [Hardware](#hardware)
 - [Quick Start](#quick-start)
-- [Configuration (`/config.json`)](#configuration-configjson)
+- [Configuration](#configuration)
 - [REST API](#rest-api)
-- [API Docs (ReDoc + AsyncAPI + GitHub Pages)](#api-docs-redoc--asyncapi--github-pages)
-- [MQTT](#mqtt)
+- [MQTT API](#mqtt-api)
 - [OTA Update](#ota-update)
-- [SD Persistence](#sd-persistence)
-- [Smoke Test](#smoke-test)
-- [Troubleshooting](#troubleshooting)
+- [Persistence and Logging](#persistence-and-logging)
 - [Development](#development)
-- [API Contract](#api-contract)
-- [License](#license)
+- [Troubleshooting](#troubleshooting)
 
-## Overview
+## Live API Docs
 
-### Core Features
+GitHub Pages publishes both API documentations:
 
-- Event-driven runtime without blocking `delay()` loops (`delay(0)` only for yield).
-- DS18B20 auto-discovery (sensor ID = ROM ID in hex).
-- Non-blocking measurement state machine (`request -> wait -> read`).
-- REST API on configurable port.
-- MQTT publishing with retained topics, LWT (`online/offline`), and per-sensor offline ring buffers.
-- Asynchronous logging (Serial always, SD optional) with queue + worker task.
-- Temperature history stored as JSONL on SD with REST tail query.
-- Persistent runtime statistics (`/stats.json`) using safe write (`.tmp` + rename).
-- Optional task watchdog support.
-- Optional OTA updates with authentication, size checks, and version gating.
+- REST (ReDoc): [dkennerknecht.github.io/TempNode](https://dkennerknecht.github.io/TempNode/)
+- MQTT (AsyncAPI HTML): [dkennerknecht.github.io/TempNode/mqtt](https://dkennerknecht.github.io/TempNode/mqtt/)
 
-### Runtime Behavior
+Published specs:
 
-- Staged startup sequence (network -> sensors -> MQTT) for more robust boot behavior.
-- Time source starts as uptime and switches to NTP when network is available.
-- Deliberate fail-fast halt if `/config.json` exists but cannot be read or parsed.
+- OpenAPI JSON: [openapi.json](https://dkennerknecht.github.io/TempNode/openapi.json)
+- AsyncAPI YAML: [asyncapi.yaml](https://dkennerknecht.github.io/TempNode/asyncapi.yaml)
 
-## Tech Stack
+Repository specs:
 
-- PlatformIO
-- Arduino framework for ESP32-S3
-- Board target: `esp32-s3-devkitc-1`
-- Platform: `https://github.com/pioarduino/platform-espressif32.git`
-- Key libraries:
-  - `ESPAsyncWebServer`
-  - `AsyncTCP`
-  - `AsyncMqttClient`
-  - `DallasTemperature`
-  - `OneWire`
-  - `ArduinoJson`
+- [`docs/openapi.json`](docs/openapi.json)
+- [`docs/asyncapi.yaml`](docs/asyncapi.yaml)
 
-Note: A pre-build script (`scripts/patch_onewire.py`) patches the locally installed OneWire source to silence a known warning pattern.
-
-## Hardware and Pinout
-
-![Waveshare ESP32-S3-ETH board](ESP32-S3-ETH.jpg)
+## Hardware
 
 ### Target Board
 
 - Waveshare ESP32-S3-ETH
-- W5500 Ethernet over SPI
-- Onboard TF/SD slot over SPI
+- W5500 Ethernet via SPI
+- TF/SD slot via SPI
 - DS18B20 on 1-Wire
 
 ### Pin Mapping
@@ -96,342 +65,232 @@ Note: A pre-build script (`scripts/patch_onewire.py`) patches the locally instal
 | 1-Wire Data (DS18B20) | GPIO17 |
 | RGB LED off-at-boot pins | GPIO21 / GPIO38 |
 
+### Board Reference
+
+![Waveshare ESP32-S3-ETH board](ESP32-S3-ETH.jpg)
+
 ## Quick Start
 
 ### 1. Prerequisites
 
-- PlatformIO Core installed (`pio` CLI available)
-- USB connection to the board
-- Optional SD card (FAT32)
-- Optional MQTT broker
+- PlatformIO Core (`pio`)
+- USB connection to board
+- Optional: SD card (FAT32)
+- Optional: MQTT broker
 
-### 2. Build
+### 2. Configure Device
 
-```bash
-pio run
-```
-
-### 3. Flash
+Copy and adjust config for filesystem upload:
 
 ```bash
-pio run -t upload -t uploadfs
+cp config.example.json data/config.json
 ```
 
-### 4. Serial Monitor
+### 3. Build
 
 ```bash
-pio device monitor
+pio run -e esp32s3
 ```
 
-### 5. Configuration File
+### 4. Flash Firmware + LittleFS + Monitor
 
-- Project config for `uploadfs` lives at [`data/config.json`](data/config.json).
-- Use [`config.example.json`](config.example.json) as template.
-- Optional runtime override: place `/config.json` on SD card root.
+```bash
+pio run -e esp32s3 -t upload -t uploadfs -t monitor
+```
 
-## Configuration (`/config.json`)
+This command uploads:
 
-- A valid `/config.json` is required (fail-fast if missing).
-- Load order:
-  1. LittleFS `/config.json` (from `pio run -t uploadfs`)
-  2. SD `/config.json` (if present, overrides LittleFS values)
-- If a config exists but is unreadable or invalid JSON, the firmware intentionally halts (fail-fast).
+- Firmware image
+- `data/` as LittleFS image (including `data/config.json`)
+- Serial monitor
 
-### Main Sections
+### 5. Verify
 
-- `network`: DHCP or static IP (`ip/gw/mask/dns`)
-- `sensors`: interval, resolution, conversion timeout
-- `rest`: enable/disable and port
-- `mqtt`: broker, optional auth (`user/pass`), topic base, reconnect bounds, offline buffer size, health publish toggle/interval
-- `history`: JSONL path + flush behavior
-- `logging`: per-target log levels (console/SD) plus SD rotation/retention
-- `metrics`: toggle `/api/v1/metrics`
-- `watchdog`: optional task WDT
-- `security`: REST auth settings
-- `ota`: OTA endpoint gating, downgrade policy, health confirmation window
+- Watch serial log for `ETH got IP: ...`
+- Open `http://<node-ip>/api/v1/health`
 
-### Security Rules
+## Configuration
 
-When `security.enabled=true`, at least one REST auth method must be configured:
+Runtime config path is `/config.json`.
 
-- Bearer token (`security.restToken`)
-- or Basic auth (`security.restUser` + `security.restPass`)
+Load order:
 
-Query token auth (`?token=`) is intentionally not supported.
+1. LittleFS `/config.json` (from `data/config.json` + `uploadfs`)
+2. SD `/config.json` (optional override)
+
+Main config blocks:
+
+- `network`: hostname, DHCP/static IP fields
+- `sensors`: interval, DS18B20 resolution, conversion timeout
+- `rest`: enable + port
+- `mqtt`: host/port/auth/topic/reconnect/buffer/health publishing
+- `history`: path, flush interval, retention days
+- `logging`: separate `consoleLevel` and `sdLevel`, rotation, retention
+- `metrics`: enable `/api/v1/metrics`
+- `watchdog`: task watchdog behavior
+- `security`: REST token/basic auth
+- `ota`: OTA gating and validation
+
+Reference file:
+
+- [`config.example.json`](config.example.json)
 
 ## REST API
 
-Base URL: `http://<NODE_IP>/api/v1`
+Base URL:
 
-If `security.enabled=true`, endpoints require authentication.
+- `http://<NODE_IP>/api/v1`
 
-### Endpoints
+When `security.enabled=true`, endpoints require auth (Bearer token or Basic auth).
 
-| Method | Path | Description |
+### Key Endpoints
+
+| Method | Path | Purpose |
 |---|---|---|
-| GET | `/health` | Returns `status` plus detailed checks (`network`, `mqtt`, `sd`, `time`, `ota_state`) |
-| GET | `/temps` | Latest readings for all discovered sensors |
-| GET | `/sensors` | Sensor summary plus current `intervalMs` |
-| GET | `/sensors/interval` | Read current sensor interval |
-| POST | `/sensors/interval` | Set interval via query, form, or JSON body |
-| PUT | `/sensors/interval` | Same as POST; semantic update endpoint |
-| GET | `/system` | System diagnostics (IP, heap, uptime, chip, boot stats) |
-| GET | `/metrics` | Runtime metrics + persistent stats |
-| GET | `/history?sensor=<id>&limit=<n>` | Tail history entries as JSON array (`limit` 1..1000) |
-| POST | `/ota` | Firmware upload endpoint (conditionally enabled) |
+| GET | `/health` | Detailed status with subsystem checks |
+| GET | `/temps` | Latest reading for all discovered sensors |
+| GET | `/sensors` | Sensor summary and interval |
+| GET/POST/PUT | `/sensors/interval` | Read/set sensor interval |
+| GET | `/system` | Runtime diagnostics |
+| GET | `/metrics` | Runtime + persisted counters |
+| GET | `/history` | Tail history (`sensor`, `limit`) |
+| POST | `/ota` | OTA upload endpoint (if enabled) |
 
-### Example Calls
+### `/health` details
 
-No auth (only if security is disabled):
+`checks.sd` includes:
 
-```bash
-curl -sS "http://$NODE_IP/api/v1/health"
-curl -sS "http://$NODE_IP/api/v1/temps"
-```
+- `sdMountFails`
+- `sdWriteFails`
+- `diskSizeBytes`
+- `diskUsedBytes`
+- `diskFreeBytes`
+- `usagePercent`
 
-`/health` response now includes per-subsystem detail fields under `checks.*` (for example `checks.network.up`, `checks.mqtt.connected`, `checks.mqtt.resolveOk`, `checks.mqtt.tcpProbeOpen`, `checks.sd.available`, `checks.sd.diskUsedBytes`, `checks.sd.usagePercent`, `checks.time.valid`, `checks.ota_state.imageState`).
+`checks.mqtt` includes diagnostics such as:
 
-Bearer token:
+- `host`, `port`, `user`
+- `connectAttempts`
+- DNS resolve result/IP
+- ping result/latency
+- TCP probe result
 
-```bash
-TOKEN="<your-token>"
-curl -sS -H "Authorization: Bearer $TOKEN" "http://$NODE_IP/api/v1/system"
-```
+## MQTT API
 
-Basic auth:
+Topic base defaults to `device`:
 
-```bash
-curl -u api:yourpassword "http://$NODE_IP/api/v1/system"
-```
+- `device/<deviceId>/temps/<sensorId>`
+- `device/<deviceId>/system`
+- `device/<deviceId>/health`
+- `device/<deviceId>/status` (LWT retained)
 
-## API Docs (ReDoc + AsyncAPI + GitHub Pages)
+Auth behavior:
 
-This repository includes automated REST and MQTT docs build + GitHub Pages deployment:
+- If `mqtt.user` and `mqtt.pass` are set: username/password login
+- If both are empty: anonymous login
+- Legacy fallback from `security.mqttUser` / `security.mqttPass` is still supported
 
-- Workflow: [`.github/workflows/api-docs-pages.yml`](.github/workflows/api-docs-pages.yml)
-- REST spec: [`docs/openapi.json`](docs/openapi.json)
-- MQTT spec: [`docs/asyncapi.yaml`](docs/asyncapi.yaml)
-- Contract check: [`scripts/contract_test_openapi.py`](scripts/contract_test_openapi.py)
+Health metrics publishing:
 
-### Hosted docs URL
+- `mqtt.publishHealth` enables/disables health topic publishing
+- `mqtt.healthIntervalMs` controls publish interval
 
-After enabling GitHub Pages for this repository (source: **GitHub Actions**), docs are published at:
+Contract reference:
 
-- REST docs (ReDoc): `https://dkennerknecht.github.io/TempNode/`
-- MQTT docs (AsyncAPI HTML): `https://dkennerknecht.github.io/TempNode/mqtt/`
-
-Published raw specs:
-
-- OpenAPI: `https://dkennerknecht.github.io/TempNode/openapi.json`
-- AsyncAPI: `https://dkennerknecht.github.io/TempNode/asyncapi.yaml`
-
-### Local generation
-
-```bash
-./scripts/build_api_docs.sh
-```
-
-This runs:
-
-- OpenAPI contract test
-- Redocly lint
-- AsyncAPI validation
-- ReDoc static HTML build to `site/index.html`
-- AsyncAPI MQTT HTML build to `site/mqtt/index.html`
-
-## MQTT
-
-Broker authentication is configured via `mqtt.user` and `mqtt.pass`.
-If both are empty, the client attempts anonymous MQTT login.
-Legacy fallback from `security.mqttUser`/`security.mqttPass` is still supported for older configs.
-On reconnect attempts, serial logs include host, port, user, clientId, plus diagnostics (DNS resolve, ping, TCP probe on configured and common alternate MQTT port).
-Health payload publishing can be configured via `mqtt.publishHealth` and `mqtt.healthIntervalMs`.
-
-### Topic Layout
-
-Default (`baseTopic = device`):
-
-- `device/<deviceId>/temps/<sensorId>` (retained)
-- `device/<deviceId>/system` (retained)
-- `device/<deviceId>/health` (retained)
-- `device/<deviceId>/status` (retained, LWT)
-
-### Payload Examples
-
-`temps/<sensorId>`:
-
-```json
-{
-  "timestamp": 1741862400123,
-  "value": 23.56,
-  "unit": "C",
-  "sensorId": "28FF641D2A1603A1",
-  "status": 0,
-  "timeSource": 0,
-  "timeValid": true
-}
-```
-
-`status`:
-
-```json
-{
-  "timestamp": 1741862400123,
-  "status": "online",
-  "ip": "192.168.1.50",
-  "link": true
-}
-```
-
-Note: In the current build, MQTT TLS is not supported by the selected client stack. If `mqtt.tls=true`, MQTT is disabled (fail-closed, no plaintext fallback).
+- [`docs/asyncapi.yaml`](docs/asyncapi.yaml)
 
 ## OTA Update
 
-### Requirements
+OTA endpoint is active only when all conditions are met:
 
-In `/config.json`:
+- `ota.enabled=true`
+- `ota.allowInsecureHttp=true`
+- `security.enabled=true`
+- `security.restToken` is set
 
-- `ota.enabled = true`
-- `ota.allowInsecureHttp = true` (explicit opt-in because REST server is plain HTTP)
-- `security.enabled = true`
-- `security.restToken` configured
-- `ota.requireHashHeader = true` (default; requires upload hash header)
+Validation includes:
 
-### Validation and Safety Rules
+- Bearer token check
+- `.bin` filename
+- `Content-Length`
+- partition size fit
+- hash check (`X-OTA-SHA256` recommended, `X-OTA-MD5` supported)
+- version gate (if `ota.allowDowngrade=false`)
 
-- Requires `Authorization: Bearer <token>`.
-- Firmware filename must end in `.bin`.
-- `Content-Length` must be present.
-- Firmware size is checked against OTA target partition.
-- Integrity header is required by default: `X-OTA-SHA256` (recommended) or `X-OTA-MD5` (legacy).
-- By default, downgrade or same-version uploads are rejected (`ota.allowDowngrade=false`).
+## Persistence and Logging
 
-### Upload Example
+Typical SD files:
 
-```bash
-NODE_IP=192.168.1.50
-TOKEN="<your-token>"
-SHA256="$(shasum -a 256 .pio/build/esp32s3/firmware.bin | awk '{print $1}')"
+- `/config.json` (optional override)
+- `/history.jsonl`
+- `/stats.json`
+- `/log-YYYYMMDD.log` (daily rotation) or `/log.log`
 
-curl -i \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "X-OTA-SHA256: $SHA256" \
-  -F "firmware=@.pio/build/esp32s3/firmware.bin" \
-  "http://$NODE_IP/api/v1/ota"
-```
+History retention:
 
-Success behavior:
+- `history.flushIntervalMs`
+- `history.retentionDays`
 
-- `HTTP 200` with `{"status":"ok","reboot":true}`
-- device reboots automatically
+Logging retention:
 
-### OTA Health Confirmation
-
-After an OTA boot, image validation is deferred to a health gate:
-
-- Waits `ota.healthConfirmMs`
-- Optional network dependency: `ota.requireNetworkForConfirm`
-- If the network does not recover within the extended window, rollback is requested
-
-## SD Persistence
-
-Typical files:
-
-- `/config.json` (optional, user-provided)
-- `/history.jsonl` (temperature history)
-- `/stats.json` (persistent counters)
-- `/log-YYYYMMDD.log` or `/log-uptime.log` (runtime logs)
-
-### Log Rotation and Retention
-
-Configured in `/config.json` under `logging`:
-
-- `logging.consoleLevel`: `DEBUG|INFO|WARN|ERROR`
-- `logging.sdLevel`: `DEBUG|INFO|WARN|ERROR`
-- `logging.sdEnabled`: enable/disable SD log writes
-- `logging.rotateDaily`: rotate daily (`/log-YYYYMMDD.log`) or single file (`/log.log`)
-- `logging.retentionDays`: delete old rotated log files (only when `rotateDaily=true`, `0` disables retention)
-
-### Log Format
-
-```text
-YYYY-MM-DD HH:MM:SS,mmm;LEVEL;Message
-```
-
-If NTP is not available, uptime-based timestamps are used.
-
-## Smoke Test
-
-Full hardware validation checklist is available in [`SMOKETEST.md`](SMOKETEST.md).
-
-## Troubleshooting
-
-### `pio run` fails because of dependencies
-
-```bash
-pio run -t clean
-pio run
-```
-
-Also ensure internet access is available for resolving `lib_deps`.
-
-### REST API not reachable
-
-- Check serial logs for `ETH got IP`.
-- Use the IP shown in logs.
-- If security is enabled, send valid auth headers.
-
-### `/api/v1/health` returns `degraded`
-
-- Expected when `mqtt.enabled=true` but broker is disconnected.
-- Verify broker reachability and `mqtt.*` config.
-
-### OTA endpoint not available
-
-Check all OTA prerequisites:
-
-- `ota.enabled`
-- `ota.allowInsecureHttp`
-- `security.enabled`
-- `security.restToken`
-
-### No sensor data
-
-- Verify DS18B20 wiring and pull-up resistor.
-- Confirm 1-Wire line is connected to GPIO17.
-- If discovery fails, logs report `no DS18B20 found`.
+- `logging.consoleLevel` and `logging.sdLevel` can differ
+- `logging.sdEnabled`
+- `logging.rotateDaily`
+- `logging.retentionDays`
 
 ## Development
 
+### Common Commands
+
+```bash
+# Build
+pio run -e esp32s3
+
+# Flash firmware + LittleFS
+pio run -e esp32s3 -t upload -t uploadfs
+
+# Monitor
+pio device monitor
+
+# OpenAPI contract test
+python3 scripts/contract_test_openapi.py
+
+# Build local static docs (ReDoc + AsyncAPI HTML)
+./scripts/build_api_docs.sh
+```
+
 ### Key Files
 
-- [`src/main.cpp`](src/main.cpp): boot sequence, runtime loop, module wiring
-- [`src/RestServer.cpp`](src/RestServer.cpp): REST endpoints and OTA upload handling
-- [`src/MqttClientManager.cpp`](src/MqttClientManager.cpp): MQTT connection, buffering, publishing
-- [`src/SensorManager.cpp`](src/SensorManager.cpp): DS18B20 measurement state machine
-- [`src/OtaHealthManager.cpp`](src/OtaHealthManager.cpp): OTA health-confirm and rollback logic
-- [`config.example.json`](config.example.json): config template
-- [`SMOKETEST.md`](SMOKETEST.md): hardware smoke-test checklist
+- [`src/main.cpp`](src/main.cpp) - boot sequence and runtime wiring
+- [`src/RestServer.cpp`](src/RestServer.cpp) - REST routes + OTA handler
+- [`src/MqttClientManager.cpp`](src/MqttClientManager.cpp) - MQTT connect/reconnect/publish
+- [`src/ConfigManager.cpp`](src/ConfigManager.cpp) - config loading + validation
+- [`scripts/build_api_docs.sh`](scripts/build_api_docs.sh) - API docs generation
+- [`.github/workflows/api-docs-pages.yml`](.github/workflows/api-docs-pages.yml) - GitHub Pages pipeline
 
-### Useful Commands
+## Troubleshooting
+
+### MQTT connects to old/wrong host
+
+Most common reason: runtime config on LittleFS/SD still has old values.
+
+1. Update `data/config.json`
+2. Re-upload LittleFS: `pio run -e esp32s3 -t uploadfs`
+3. Reboot and re-check `/api/v1/health` -> `checks.mqtt.host`
+
+### Build fails with missing library headers
+
+Run clean build and ensure dependencies are installed:
 
 ```bash
-pio run
-pio run -t upload -t uploadfs
-pio device monitor
+pio run -t clean
+pio run -e esp32s3
 ```
 
-## API Contract
+### `/health` returns `degraded`
 
-- OpenAPI spec: [`docs/openapi.json`](docs/openapi.json)
-- AsyncAPI spec: [`docs/asyncapi.yaml`](docs/asyncapi.yaml)
-- Contract test (spec vs. registered REST routes):
+Check fields in `checks.*` (network, mqtt, sd, time, ota_state). The response is intentionally detailed to show the failing subsystem.
 
-```bash
-python3 scripts/contract_test_openapi.py
-npx --yes @asyncapi/cli@latest validate docs/asyncapi.yaml
-```
+---
 
-## License
-
-No license file is currently included. For a public repository, add a suitable `LICENSE`.
+No license file is currently included. Add a `LICENSE` file before public distribution.

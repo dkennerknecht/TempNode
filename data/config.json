@@ -4,7 +4,7 @@
     "dhcp": true
   },
   "sensors": {
-    "intervalMs": 60000,
+    "intervalMs": 10000,
     "resolutionBits": 12,
     "conversionTimeoutMs": 1000
   },
