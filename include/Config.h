@@ -90,6 +90,7 @@ struct NetworkConfig {
 };
 
 struct AppConfig {
+  uint16_t configVersion;
   NetworkConfig network;
   SecurityConfig security;
   RestConfig rest;

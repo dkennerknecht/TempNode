@@ -7,6 +7,8 @@
 #include <SD.h>
 #include <WiFi.h>
 
+static constexpr uint16_t kCurrentConfigVersion = 2;
+
 static bool readFileToString(fs::FS& fs, const char* path, String& out) {
   File f = fs.open(path, FILE_READ);
   if (!f) return false;
@@ -40,7 +42,93 @@ static bool writeStringAtomic(fs::FS& fs, const char* path, const String& conten
   return true;
 }
 
+static uint16_t readConfigVersion(const JsonDocument& doc) {
+  JsonVariantConst v = doc["configVersion"];
+  if (v.isNull()) return 1; // legacy, pre-versioned config
+
+  uint32_t n = v.as<uint32_t>();
+  if (n == 0) return 1;
+  if (n > 0xFFFFu) return 0xFFFFu;
+  return (uint16_t)n;
+}
+
+static void migrateV1ToV2(JsonDocument& doc, bool* usedLegacyBasicAsToken) {
+  if (usedLegacyBasicAsToken) *usedLegacyBasicAsToken = false;
+
+  JsonObject sec = doc["security"].to<JsonObject>();
+  String mode = String((const char*)(sec["restAuthMode"] | ""));
+  mode.trim();
+  mode.toLowerCase();
+
+  if (!mode.length()) {
+    const bool legacyEnabled = sec["enabled"] | false;
+    String token = String((const char*)(sec["restToken"] | ""));
+    token.trim();
+
+    mode = (legacyEnabled || token.length()) ? "token" : "anonymous";
+    sec["restAuthMode"] = mode;
+
+    // Legacy fallback: basic-auth-only setups get a deterministic token migration.
+    if (!token.length() && legacyEnabled) {
+      String legacyPass = String((const char*)(sec["restPass"] | ""));
+      if (legacyPass.length()) {
+        sec["restToken"] = legacyPass;
+        if (usedLegacyBasicAsToken) *usedLegacyBasicAsToken = true;
+      }
+    }
+  }
+
+  if (sec["allowAnonymousGet"].isNull()) {
+    sec["allowAnonymousGet"] = (mode == "anonymous");
+  }
+}
+
+static bool migrateConfigDocument(JsonDocument& doc,
+                                  uint16_t* fromVersion,
+                                  uint16_t* toVersion,
+                                  bool* changed,
+                                  bool* usedLegacyBasicAsToken,
+                                  String* error) {
+  if (changed) *changed = false;
+  if (usedLegacyBasicAsToken) *usedLegacyBasicAsToken = false;
+  if (error) *error = "";
+
+  uint16_t version = readConfigVersion(doc);
+  if (fromVersion) *fromVersion = version;
+
+  if (version > kCurrentConfigVersion) {
+    if (error) *error = String("unsupported configVersion: ") + (unsigned)version;
+    return false;
+  }
+
+  bool anyChange = false;
+  bool usedLegacyBasic = false;
+
+  while (version < kCurrentConfigVersion) {
+    if (version == 1) {
+      migrateV1ToV2(doc, &usedLegacyBasic);
+      version = 2;
+      anyChange = true;
+      continue;
+    }
+
+    if (error) *error = String("no migration path for configVersion ") + (unsigned)version;
+    return false;
+  }
+
+  if ((doc["configVersion"] | 0U) != kCurrentConfigVersion) {
+    doc["configVersion"] = kCurrentConfigVersion;
+    anyChange = true;
+  }
+
+  if (changed) *changed = anyChange;
+  if (usedLegacyBasicAsToken) *usedLegacyBasicAsToken = usedLegacyBasic;
+  if (toVersion) *toVersion = kCurrentConfigVersion;
+  return true;
+}
+
 static void configToJson(const AppConfig& cfg, JsonDocument& doc) {
+  doc["configVersion"] = cfg.configVersion;
   doc["network"]["hostname"] = cfg.network.hostname;
   doc["network"]["dhcp"] = cfg.network.dhcp;
   doc["network"]["ip"] = cfg.network.ip;
@@ -122,6 +210,7 @@ void ConfigManager::begin(LogManager& log) {
 
 void ConfigManager::applyDefaults() {
   _cfg = AppConfig{};
+  _cfg.configVersion = kCurrentConfigVersion;
   _cfg.security.restAuthMode = "anonymous";
   _cfg.security.allowAnonymousGet = false;
   _cfg.mqtt.publishHealth = true;
@@ -154,6 +243,8 @@ bool ConfigManager::parseJson(const String& json) {
     _log->error(String("config.json parse error: ") + err.c_str());
     return false;
   }
+
+  _cfg.configVersion = doc["configVersion"] | _cfg.configVersion;
 
   // Feature flags
   _cfg.rest.enabled    = doc["rest"]["enabled"]    | _cfg.rest.enabled;
@@ -444,17 +535,60 @@ bool ConfigManager::loadFromSources(bool sdAvailable, bool littleFsAvailable) {
   applyDefaults();
 
   bool loadedAny = false;
+  auto loadFromFs = [this, &loadedAny](fs::FS& fs,
+                                        const char* sourceName,
+                                        bool overrideSource) -> bool {
+    String rawJson;
+    if (!readFileToString(fs, "/config.json", rawJson)) {
+      _log->error(String("failed to read /config.json from ") + sourceName);
+      return false;
+    }
+
+    JsonDocument doc;
+    auto err = deserializeJson(doc, rawJson);
+    if (err) {
+      _log->error(String("config.json parse error from ") + sourceName + ": " + err.c_str());
+      return false;
+    }
+
+    uint16_t fromVersion = 0;
+    uint16_t toVersion = 0;
+    bool migrated = false;
+    bool usedLegacyBasicAsToken = false;
+    String migErr;
+    if (!migrateConfigDocument(doc, &fromVersion, &toVersion, &migrated, &usedLegacyBasicAsToken, &migErr)) {
+      _log->error(String("config migration failed for ") + sourceName + ": " + migErr);
+      return false;
+    }
+
+    String normalizedJson;
+    if (serializeJson(doc, normalizedJson) == 0) {
+      _log->error(String("failed to serialize migrated config for ") + sourceName);
+      return false;
+    }
+
+    if (migrated) {
+      _log->warn(String("config migrated on ") + sourceName + ": v" + (unsigned)fromVersion + " -> v" + (unsigned)toVersion);
+      if (usedLegacyBasicAsToken) {
+        _log->warn("config migration: legacy restPass migrated to restToken; rotate token soon");
+      }
+      if (!writeStringAtomic(fs, "/config.json", normalizedJson)) {
+        _log->error(String("failed to persist migrated /config.json on ") + sourceName);
+        return false;
+      }
+    }
+
+    if (overrideSource) _log->info("loading /config.json from SD (overrides LittleFS)");
+    else _log->info(String("loading /config.json from ") + sourceName);
+
+    if (!parseJson(normalizedJson)) return false;
+    loadedAny = true;
+    return true;
+  };
 
   if (littleFsAvailable) {
     if (LittleFS.exists("/config.json")) {
-      String json;
-      if (!readFileToString(LittleFS, "/config.json", json)) {
-        _log->error("failed to read /config.json from LittleFS");
-        return false;
-      }
-      _log->info("loading /config.json from LittleFS");
-      if (!parseJson(json)) return false;
-      loadedAny = true;
+      if (!loadFromFs(LittleFS, "LittleFS", false)) return false;
     } else {
       _log->warn("config: /config.json not found on LittleFS");
     }
@@ -464,14 +598,7 @@ bool ConfigManager::loadFromSources(bool sdAvailable, bool littleFsAvailable) {
 
   if (sdAvailable) {
     if (SD.exists("/config.json")) {
-      String json;
-      if (!readFileToString(SD, "/config.json", json)) {
-        _log->error("failed to read /config.json from SD");
-        return false;
-      }
-      _log->info("loading /config.json from SD (overrides LittleFS)");
-      if (!parseJson(json)) return false;
-      loadedAny = true;
+      if (!loadFromFs(SD, "SD", true)) return false;
     } else {
       _log->info("config: /config.json not found on SD");
     }

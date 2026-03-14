@@ -1,4 +1,5 @@
 {
+  "configVersion": 2,
   "network": {
     "hostname": "esp32-s3-eth",
     "dhcp": true

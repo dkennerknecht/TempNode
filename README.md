@@ -113,6 +113,11 @@ This command uploads:
 
 Runtime config path is `/config.json`.
 
+Config schema version:
+
+- Top-level `configVersion` is used for migration (`2` = current)
+- Older configs are auto-migrated on boot and written back to storage
+
 Load order:
 
 1. LittleFS `/config.json` (from `data/config.json` + `uploadfs`)
