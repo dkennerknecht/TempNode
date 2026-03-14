@@ -16,6 +16,8 @@
     "enabled": true,
     "host": "192.168.1.10",
     "port": 1883,
+    "user": "",
+    "pass": "",
     "baseTopic": "device",
     "offlineBufferPerSensor": 20,
     "reconnectMinMs": 1000,
@@ -25,6 +27,13 @@
     "enabled": true,
     "path": "/history.jsonl",
     "flushIntervalMs": 2000,
+    "retentionDays": 30
+  },
+  "logging": {
+    "consoleLevel": "INFO",
+    "sdLevel": "INFO",
+    "sdEnabled": true,
+    "rotateDaily": true,
     "retentionDays": 30
   },
   "metrics": {
@@ -47,8 +56,6 @@
     "enabled": false,
     "restUser": "api",
     "restPass": "CHANGE_ME_STRONG_PASSWORD",
-    "restToken": "",
-    "mqttUser": "",
-    "mqttPass": ""
+    "restToken": ""
   }
 }

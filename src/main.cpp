@@ -123,6 +123,7 @@ void setup() {
   }
 
   const AppConfig& cfg = g_cfg.get();
+  g_log.configure(cfg.logging);
   g_mqttEnabled = cfg.mqtt.enabled;
 // Watchdog (after logger)
   g_wdt.begin(cfg.watchdog, g_log);

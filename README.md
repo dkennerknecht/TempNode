@@ -138,11 +138,12 @@ pio device monitor
 - `network`: DHCP or static IP (`ip/gw/mask/dns`)
 - `sensors`: interval, resolution, conversion timeout
 - `rest`: enable/disable and port
-- `mqtt`: broker, topic base, reconnect bounds, offline buffer size
+- `mqtt`: broker, optional auth (`user/pass`), topic base, reconnect bounds, offline buffer size
 - `history`: JSONL path + flush behavior
+- `logging`: per-target log levels (console/SD) plus SD rotation/retention
 - `metrics`: toggle `/api/v1/metrics`
 - `watchdog`: optional task WDT
-- `security`: REST/MQTT auth settings
+- `security`: REST auth settings
 - `ota`: OTA endpoint gating, downgrade policy, health confirmation window
 
 ### Security Rules
@@ -200,6 +201,10 @@ curl -u api:yourpassword "http://$NODE_IP/api/v1/system"
 ```
 
 ## MQTT
+
+Broker authentication is configured via `mqtt.user` and `mqtt.pass`.
+If both are empty, the client attempts anonymous MQTT login.
+Legacy fallback from `security.mqttUser`/`security.mqttPass` is still supported for older configs.
 
 ### Topic Layout
 
@@ -294,6 +299,16 @@ Typical files:
 - `/history.jsonl` (temperature history)
 - `/stats.json` (persistent counters)
 - `/log-YYYYMMDD.log` or `/log-uptime.log` (runtime logs)
+
+### Log Rotation and Retention
+
+Configured in `/config.json` under `logging`:
+
+- `logging.consoleLevel`: `DEBUG|INFO|WARN|ERROR`
+- `logging.sdLevel`: `DEBUG|INFO|WARN|ERROR`
+- `logging.sdEnabled`: enable/disable SD log writes
+- `logging.rotateDaily`: rotate daily (`/log-YYYYMMDD.log`) or single file (`/log.log`)
+- `logging.retentionDays`: delete old rotated log files (only when `rotateDaily=true`, `0` disables retention)
 
 ### Log Format
 

@@ -23,6 +23,8 @@ struct MqttConfig {
   String host = "192.168.1.117";
   uint16_t port = 1883;
   bool tls = false;
+  String user = "";
+  String pass = "";
   String clientId = "";
   String deviceId = "";
   String baseTopic = "device";
@@ -49,6 +51,14 @@ struct HistoryConfig {
   String path = "/history.jsonl";
   uint32_t flushIntervalMs = 1000;
   uint32_t retentionDays = 0; // 0 = no retention
+};
+
+struct LoggingConfig {
+  String consoleLevel = "INFO";
+  String sdLevel = "INFO";
+  bool sdEnabled = true;
+  bool rotateDaily = true;
+  uint16_t retentionDays = 0; // 0 = no retention
 };
 
 struct SensorConfig {
@@ -81,6 +91,7 @@ struct AppConfig {
   OtaConfig ota;
   MetricsConfig metrics;
   HistoryConfig history;
+  LoggingConfig logging;
   SensorConfig sensors;
   WatchdogConfig watchdog;
 

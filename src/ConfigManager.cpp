@@ -13,6 +13,17 @@ static bool readFileToString(const char* path, String& out) {
   return true;
 }
 
+static bool isValidLogLevelName(const String& level) {
+  return level == "DEBUG" || level == "INFO" || level == "WARN" || level == "ERROR";
+}
+
+static bool normalizeLogLevelName(String& level) {
+  level.trim();
+  level.toUpperCase();
+  if (!isValidLogLevelName(level)) return false;
+  return true;
+}
+
 void ConfigManager::begin(LogManager& log) {
   _log = &log;
   applyDefaults();
@@ -85,6 +96,8 @@ bool ConfigManager::parseJson(const String& json) {
   _cfg.mqtt.reconnectMinMs = doc["mqtt"]["reconnectMinMs"] | _cfg.mqtt.reconnectMinMs;
   _cfg.mqtt.reconnectMaxMs = doc["mqtt"]["reconnectMaxMs"] | _cfg.mqtt.reconnectMaxMs;
   _cfg.mqtt.tls = doc["mqtt"]["tls"] | _cfg.mqtt.tls;
+  _cfg.mqtt.user = String((const char*)(doc["mqtt"]["user"] | _cfg.mqtt.user.c_str()));
+  _cfg.mqtt.pass = String((const char*)(doc["mqtt"]["pass"] | _cfg.mqtt.pass.c_str()));
 
   // REST
   _cfg.rest.port = doc["rest"]["port"] | _cfg.rest.port;
@@ -93,6 +106,13 @@ bool ConfigManager::parseJson(const String& json) {
   _cfg.history.path = String((const char*)(doc["history"]["path"] | _cfg.history.path.c_str()));
   _cfg.history.flushIntervalMs = doc["history"]["flushIntervalMs"] | _cfg.history.flushIntervalMs;
   _cfg.history.retentionDays = doc["history"]["retentionDays"] | _cfg.history.retentionDays;
+
+  // Logging
+  _cfg.logging.consoleLevel = String((const char*)(doc["logging"]["consoleLevel"] | _cfg.logging.consoleLevel.c_str()));
+  _cfg.logging.sdLevel = String((const char*)(doc["logging"]["sdLevel"] | _cfg.logging.sdLevel.c_str()));
+  _cfg.logging.sdEnabled = doc["logging"]["sdEnabled"] | _cfg.logging.sdEnabled;
+  _cfg.logging.rotateDaily = doc["logging"]["rotateDaily"] | _cfg.logging.rotateDaily;
+  _cfg.logging.retentionDays = doc["logging"]["retentionDays"] | _cfg.logging.retentionDays;
 
   // Watchdog
   _cfg.watchdog.enabled = doc["watchdog"]["enabled"] | _cfg.watchdog.enabled;
@@ -151,6 +171,25 @@ bool ConfigManager::validate() {
   if (_cfg.history.retentionDays > 3650) {
     _log->warn("config: history.retentionDays too high, forcing 3650 days");
     _cfg.history.retentionDays = 3650;
+  }
+
+  if (!normalizeLogLevelName(_cfg.logging.consoleLevel)) {
+    _log->warn("config: logging.consoleLevel invalid, forcing INFO");
+    _cfg.logging.consoleLevel = "INFO";
+  }
+
+  if (!normalizeLogLevelName(_cfg.logging.sdLevel)) {
+    _log->warn("config: logging.sdLevel invalid, forcing INFO");
+    _cfg.logging.sdLevel = "INFO";
+  }
+
+  if (_cfg.logging.retentionDays > 3650) {
+    _log->warn("config: logging.retentionDays too high, forcing 3650 days");
+    _cfg.logging.retentionDays = 3650;
+  }
+
+  if (_cfg.logging.retentionDays > 0 && !_cfg.logging.rotateDaily) {
+    _log->warn("config: logging.retentionDays requires logging.rotateDaily=true; retention will be inactive");
   }
 
   if (_cfg.security.enabled) {

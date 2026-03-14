@@ -7,6 +7,20 @@
 #include "SensorManager.h"
 #include <ArduinoJson.h>
 
+static const char* mqttDisconnectReasonName(AsyncMqttClientDisconnectReason reason) {
+  switch (reason) {
+    case AsyncMqttClientDisconnectReason::TCP_DISCONNECTED: return "TCP_DISCONNECTED";
+    case AsyncMqttClientDisconnectReason::MQTT_UNACCEPTABLE_PROTOCOL_VERSION: return "MQTT_UNACCEPTABLE_PROTOCOL_VERSION";
+    case AsyncMqttClientDisconnectReason::MQTT_IDENTIFIER_REJECTED: return "MQTT_IDENTIFIER_REJECTED";
+    case AsyncMqttClientDisconnectReason::MQTT_SERVER_UNAVAILABLE: return "MQTT_SERVER_UNAVAILABLE";
+    case AsyncMqttClientDisconnectReason::MQTT_MALFORMED_CREDENTIALS: return "MQTT_MALFORMED_CREDENTIALS";
+    case AsyncMqttClientDisconnectReason::MQTT_NOT_AUTHORIZED: return "MQTT_NOT_AUTHORIZED";
+    case AsyncMqttClientDisconnectReason::ESP8266_NOT_ENOUGH_SPACE: return "ESP8266_NOT_ENOUGH_SPACE";
+    case AsyncMqttClientDisconnectReason::TLS_BAD_FINGERPRINT: return "TLS_BAD_FINGERPRINT";
+    default: return "UNKNOWN";
+  }
+}
+
 void MqttClientManager::begin(const AppConfig& cfg, AppNetworkManager& net, LogManager& log, StatsManager& stats, TimeManager& tm) {
   _cfg = &cfg;
   _net = &net;
@@ -20,10 +34,19 @@ void MqttClientManager::begin(const AppConfig& cfg, AppNetworkManager& net, LogM
   // Keep all strings alive (AsyncMqttClient may keep pointers)
   _tls = cfg.mqtt.tls;
   _host = cfg.mqtt.host;
-  if (cfg.mqtt.clientId.length()) _clientId = cfg.mqtt.clientId;
-  else _clientId = String("esp32s3-") + _net->macStr();
+  if (cfg.mqtt.clientId.length()) {
+    _clientId = cfg.mqtt.clientId;
+  } else {
+    String macNoSep = _net->macStr();
+    macNoSep.replace(":", "");
+    _clientId = String("esp32s3-") + macNoSep;
+  }
 
-  if (cfg.security.enabled && cfg.security.mqttUser.length()) {
+  if (cfg.mqtt.user.length() || cfg.mqtt.pass.length()) {
+    _user = cfg.mqtt.user;
+    _pass = cfg.mqtt.pass;
+  } else if (cfg.security.mqttUser.length() || cfg.security.mqttPass.length()) {
+    _log->warn("config: security.mqttUser/security.mqttPass are legacy, prefer mqtt.user/mqtt.pass");
     _user = cfg.security.mqttUser;
     _pass = cfg.security.mqttPass;
   } else {
@@ -37,9 +60,15 @@ void MqttClientManager::begin(const AppConfig& cfg, AppNetworkManager& net, LogM
   }
   _mqtt.setClientId(_clientId.c_str());
   _mqtt.setServer(_host.c_str(), cfg.mqtt.port);
+  _log->info(String("MQTT target: ") + _host + ":" + String(cfg.mqtt.port) + " clientId=" + _clientId);
 
   if (_user.length()) {
+    _log->info("MQTT auth: username configured");
     _mqtt.setCredentials(_user.c_str(), _pass.c_str());
+  } else if (_pass.length()) {
+    _log->warn("config: mqtt.pass set but mqtt.user is empty; trying anonymous MQTT login");
+  } else {
+    _log->info("MQTT auth: no credentials configured, trying anonymous login");
   }
 
   _willTopic = topicStatus();
@@ -57,8 +86,17 @@ void MqttClientManager::begin(const AppConfig& cfg, AppNetworkManager& net, LogM
   _mqtt.onDisconnect([this](AsyncMqttClientDisconnectReason reason) {
     _connected = false;
     _stats->incrementMqttReconnects();
-    String msg = String("MQTT disconnected, reason=") + (int)reason;
+    String msg = String("MQTT disconnected, reason=") + mqttDisconnectReasonName(reason) + " (" + (int)reason + ")";
     _log->warn(msg);
+    if (reason == AsyncMqttClientDisconnectReason::TCP_DISCONNECTED) {
+      _log->warn("MQTT hint: TCP disconnected before MQTT CONNACK. Check mqtt.host/mqtt.port, broker listener type (plain 1883 vs TLS 8883), and broker-side ACL/firewall.");
+    } else if (reason == AsyncMqttClientDisconnectReason::MQTT_NOT_AUTHORIZED) {
+      _log->warn("MQTT hint: broker rejected authentication. Configure mqtt.user/mqtt.pass or enable anonymous access on broker.");
+    } else if (reason == AsyncMqttClientDisconnectReason::MQTT_MALFORMED_CREDENTIALS) {
+      _log->warn("MQTT hint: malformed credentials or username/password flags mismatch.");
+    } else if (reason == AsyncMqttClientDisconnectReason::MQTT_IDENTIFIER_REJECTED) {
+      _log->warn("MQTT hint: client ID rejected by broker. Set mqtt.clientId to a simple unique ASCII value.");
+    }
     scheduleReconnect();
   });
 

@@ -6,6 +6,7 @@
 
 class TimeManager;
 class StatsManager;
+struct LoggingConfig;
 
 enum class LogLevel : uint8_t { DEBUG = 0, INFO = 1, WARN = 2, ERROR = 3 };
 
@@ -19,9 +20,15 @@ class LogManager {
 public:
   void begin(TimeManager& tm, StatsManager& stats, bool sdAvailable);
   void setSdAvailable(bool available);
+  void configure(const LoggingConfig& cfg);
 
-  void setLevel(LogLevel lvl) { _minLevel = lvl; }
-  LogLevel level() const { return _minLevel; }
+  static LogLevel parseLevel(const String& name, LogLevel fallback = LogLevel::INFO);
+
+  void setLevel(LogLevel lvl) { _consoleMinLevel = lvl; _sdMinLevel = lvl; }
+  void setConsoleLevel(LogLevel lvl) { _consoleMinLevel = lvl; }
+  void setSdLevel(LogLevel lvl) { _sdMinLevel = lvl; }
+  LogLevel consoleLevel() const { return _consoleMinLevel; }
+  LogLevel sdLevel() const { return _sdMinLevel; }
 
   void debug(const String& s) { log(LogLevel::DEBUG, s); }
   void info(const String& s)  { log(LogLevel::INFO, s);  }
@@ -46,7 +53,11 @@ private:
   bool _sdAvailable = false;
   volatile bool _paused = false;
 
-  LogLevel _minLevel = LogLevel::INFO;
+  LogLevel _consoleMinLevel = LogLevel::INFO;
+  LogLevel _sdMinLevel = LogLevel::INFO;
+  bool _sdLogEnabled = true;
+  bool _rotateDaily = true;
+  uint16_t _retentionDays = 0;
 
   QueueHandle_t _queue = nullptr;
   SemaphoreHandle_t _sdMutex = nullptr;
@@ -60,6 +71,7 @@ private:
   void taskMain();
 
   void rotateIfNeeded();
+  void applyRetentionIfNeeded();
   void writeLineSerial(const char* line);
   bool writeLineSd(const char* line);
   const char* levelToStr(LogLevel lvl) const;
