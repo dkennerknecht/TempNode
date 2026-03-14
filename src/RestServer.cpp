@@ -546,6 +546,28 @@ void RestServer::setupRoutes() {
     serializeJson(doc, out);
     req->send(200, "application/json", out);
   });
+
+  _srv->on("/api/v1/temp", HTTP_GET, [this](AsyncWebServerRequest* req) {
+    if (!authOk(req)) return;
+    if (!_sensors) return sendError(req, 500, "sensors unavailable");
+
+    String sensorId = "";
+    if (req->hasParam("sensorId")) sensorId = req->getParam("sensorId")->value();
+    if (!sensorId.length() && req->hasParam("sensor")) sensorId = req->getParam("sensor")->value();
+    if (!sensorId.length()) return sendError(req, 400, "missing sensorId");
+
+    SensorReading r;
+    if (!_sensors->getLatest(sensorId, r)) return sendError(req, 404, "sensor not found");
+
+    JsonDocument doc;
+    doc["sensorId"] = r.id;
+    doc["tempC"] = r.tempC;
+    doc["status"] = (uint8_t)r.status;
+    doc["timestamp"] = (uint64_t)r.timestampMs;
+    doc["timeValid"] = r.timeValid;
+    doc["timeSource"] = timeSourceStr(r.timeSource);
+    sendJson(req, doc);
+  });
   // Sensors summary (includes interval + latest readings)
   _srv->on("/api/v1/sensors", HTTP_GET, [this](AsyncWebServerRequest* req) {
     if (!authOk(req)) return;

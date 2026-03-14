@@ -169,6 +169,7 @@ Optional behavior in token mode:
 |---|---|---|
 | GET | `/health` | Detailed status with subsystem checks |
 | GET | `/temps` | Latest reading for all discovered sensors |
+| GET | `/temp?sensorId=<id>` | Latest reading for one specific sensor |
 | GET | `/sensors` | Sensor summary and interval |
 | GET/POST/PUT | `/sensors/interval` | Read/set sensor interval (persisted to LittleFS, mirrored to SD when `/config.json` exists) |
 | GET | `/system` | Runtime diagnostics |

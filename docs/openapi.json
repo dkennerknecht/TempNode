@@ -111,6 +111,63 @@
         }
       }
     },
+    "/api/v1/temp": {
+      "get": {
+        "tags": ["sensors"],
+        "operationId": "getTempBySensor",
+        "summary": "Latest reading for one sensor",
+        "parameters": [
+          {
+            "name": "sensorId",
+            "in": "query",
+            "required": true,
+            "schema": {"type": "string"},
+            "description": "1-Wire sensor ID (ROM hex)."
+          }
+        ],
+        "security": [
+          {"bearerAuth": []},
+          {"basicAuth": []}
+        ],
+        "responses": {
+          "200": {
+            "description": "Latest reading for requested sensor",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/TempReading"}
+              }
+            }
+          },
+          "400": {
+            "description": "Missing sensorId parameter",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ErrorResponse"}
+              }
+            }
+          },
+          "404": {
+            "description": "Sensor not found",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ErrorResponse"}
+              }
+            }
+          },
+          "500": {
+            "description": "Sensors unavailable",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ErrorResponse"}
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
     "/api/v1/sensors": {
       "get": {
         "tags": ["sensors"],
