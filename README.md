@@ -21,6 +21,7 @@ It reads DS18B20 sensors, exposes data over REST, publishes to MQTT, stores logs
 - [Quick Start](#quick-start)
 - [Configuration (`/config.json`)](#configuration-configjson)
 - [REST API](#rest-api)
+- [REST API Docs (ReDoc + GitHub Pages)](#rest-api-docs-redoc--github-pages)
 - [MQTT](#mqtt)
 - [OTA Update](#ota-update)
 - [SD Persistence](#sd-persistence)
@@ -202,6 +203,36 @@ Basic auth:
 ```bash
 curl -u api:yourpassword "http://$NODE_IP/api/v1/system"
 ```
+
+## REST API Docs (ReDoc + GitHub Pages)
+
+This repository includes an automated ReDoc build and GitHub Pages deployment:
+
+- Workflow: [`.github/workflows/api-docs-pages.yml`](.github/workflows/api-docs-pages.yml)
+- Input spec: [`docs/openapi.json`](docs/openapi.json)
+- Contract check: [`scripts/contract_test_openapi.py`](scripts/contract_test_openapi.py)
+
+### Hosted docs URL
+
+After enabling GitHub Pages for this repository (source: **GitHub Actions**), docs are published at:
+
+`https://<your-github-user-or-org>.github.io/TempNode/`
+
+Raw OpenAPI spec is also published as:
+
+`https://<your-github-user-or-org>.github.io/TempNode/openapi.json`
+
+### Local generation
+
+```bash
+./scripts/build_api_docs.sh
+```
+
+This runs:
+
+- OpenAPI contract test
+- Redocly lint
+- ReDoc static HTML build to `site/index.html`
 
 ## MQTT
 

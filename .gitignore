@@ -1,4 +1,5 @@
 .pio
 .idea
+site
 config.json
 !data/config.json

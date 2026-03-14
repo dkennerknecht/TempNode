@@ -3,7 +3,11 @@
   "info": {
     "title": "TempNode REST API",
     "version": "1.0.0",
-    "description": "REST API for TempNode on ESP32-S3-ETH. Authentication is required when security.enabled=true (Bearer token or Basic auth)."
+    "description": "REST API for TempNode on ESP32-S3-ETH. Authentication is required when security.enabled=true (Bearer token or Basic auth).",
+    "license": {
+      "name": "UNLICENSED",
+      "identifier": "UNLICENSED"
+    }
   },
   "servers": [
     {
@@ -17,12 +21,30 @@
     }
   ],
   "tags": [
-    {"name": "health"},
-    {"name": "sensors"},
-    {"name": "system"},
-    {"name": "metrics"},
-    {"name": "history"},
-    {"name": "ota"}
+    {
+      "name": "health",
+      "description": "Service and subsystem health information."
+    },
+    {
+      "name": "sensors",
+      "description": "Sensor readings and sensor runtime configuration."
+    },
+    {
+      "name": "system",
+      "description": "System runtime details and device diagnostics."
+    },
+    {
+      "name": "metrics",
+      "description": "Operational counters and runtime metrics."
+    },
+    {
+      "name": "history",
+      "description": "Tail access for persisted sensor history."
+    },
+    {
+      "name": "ota",
+      "description": "Firmware upload endpoint for OTA updates."
+    }
   ],
   "paths": {
     "/api/v1/health": {
