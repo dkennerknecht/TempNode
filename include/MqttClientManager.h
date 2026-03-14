@@ -3,6 +3,7 @@
 #include <AsyncMqttClient.h>
 #include <map>
 #include <vector>
+#include <freertos/semphr.h>
 
 class LogManager;
 class StatsManager;
@@ -38,6 +39,9 @@ public:
   uint16_t lastAltPort() const { return _diagAltPort; }
   bool lastAltPortOpen() const { return _diagAltOpen; }
   uint32_t lastDiagUptimeMs() const { return _diagAtUptimeMs; }
+  bool offlineSdEnabled() const { return _sdQueueEnabled; }
+  uint32_t offlineSdQueued() const { return _sdQueueLines; }
+  uint32_t offlineSdDropped() const { return _sdQueueDropped; }
   void publishSensor(const SensorReading& r);
   void publishSystem();
   void publishHealth();
@@ -82,6 +86,14 @@ private:
   bool _diagAltOpen = false;
   uint32_t _diagAtUptimeMs = 0;
 
+  bool _sdQueueEnabled = false;
+  String _sdQueuePath;
+  uint32_t _sdQueueMaxLines = 0;
+  uint32_t _sdQueueLines = 0;
+  uint32_t _sdQueueDropped = 0;
+  uint32_t _nextSdQueueFlushMs = 0;
+  SemaphoreHandle_t _sdMutex = nullptr;
+
   // per-sensor ringbuffer
   struct Ring {
     std::vector<BufferedMsg> buf;
@@ -96,6 +108,10 @@ private:
   bool pingIp(const IPAddress& ip, uint32_t timeoutMs, uint32_t& outRttMs);
   bool tcpProbe(const IPAddress& ip, uint16_t port, uint32_t timeoutMs);
   void flushBuffers();
+  void recountSdQueueLinesLocked();
+  bool appendSdQueuedMessage(const BufferedMsg& m);
+  bool parseQueuedLine(const String& line, BufferedMsg& out) const;
+  void flushSdQueue();
 
   String topicTemps(const String& sensorId) const;
   String topicSystem() const;

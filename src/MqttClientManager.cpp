@@ -5,6 +5,7 @@
 #include "StatsManager.h"
 #include "TimeManager.h"
 #include "SensorManager.h"
+#include "SharedSdMutex.h"
 #include <ArduinoJson.h>
 #include <NetworkClient.h>
 #include <SD.h>
@@ -66,12 +67,41 @@ static void onPingEnd(esp_ping_handle_t hdl, void* args) {
   ctx->done = true;
 }
 
+static bool parseBufferedMsgLine(const String& line, BufferedMsg& out) {
+  JsonDocument doc;
+  auto err = deserializeJson(doc, line);
+  if (err) return false;
+  out.topic = String((const char*)(doc["topic"] | ""));
+  out.payload = String((const char*)(doc["payload"] | ""));
+  out.retain = doc["retain"] | false;
+  out.qos = (uint8_t)(doc["qos"] | 0);
+  return out.topic.length() > 0;
+}
+
+static bool serializeBufferedMsgLine(const BufferedMsg& msg, String& out) {
+  JsonDocument doc;
+  doc["topic"] = msg.topic;
+  doc["payload"] = msg.payload;
+  doc["retain"] = msg.retain;
+  doc["qos"] = msg.qos;
+  if (serializeJson(doc, out) == 0) return false;
+  out += "\n";
+  return true;
+}
+
 void MqttClientManager::begin(const AppConfig& cfg, AppNetworkManager& net, LogManager& log, StatsManager& stats, TimeManager& tm) {
   _cfg = &cfg;
   _net = &net;
   _log = &log;
   _stats = &stats;
   _tm = &tm;
+  _sdMutex = sharedSdMutex();
+  _sdQueueEnabled = cfg.mqtt.offlinePersistSdEnabled && _log->sdAvailable();
+  _sdQueuePath = cfg.mqtt.offlinePersistPath;
+  _sdQueueMaxLines = cfg.mqtt.offlinePersistMaxLines;
+  _sdQueueLines = 0;
+  _sdQueueDropped = 0;
+  _nextSdQueueFlushMs = millis();
 
   _deviceId = cfg.mqtt.deviceId.length() ? cfg.mqtt.deviceId : String("esp32s3-") + _net->macStr();
   _base = cfg.mqtt.baseTopic;
@@ -127,6 +157,7 @@ void MqttClientManager::begin(const AppConfig& cfg, AppNetworkManager& net, LogM
     _log->info("MQTT connected");
     publishStatus("online", true);
     flushBuffers();
+    flushSdQueue();
     _nextHealthPublishMs = millis();
     publishHealth();
   });
@@ -151,6 +182,24 @@ void MqttClientManager::begin(const AppConfig& cfg, AppNetworkManager& net, LogM
   _mqtt.onPublish([this](uint16_t packetId) {
     (void)packetId;
   });
+
+  if (_sdQueueEnabled) {
+    if (!_sdMutex) {
+      _log->warn("MQTT SD offline queue disabled: shared SD mutex unavailable");
+      _sdQueueEnabled = false;
+    } else if (!_sdQueuePath.length()) {
+      _log->warn("MQTT SD offline queue disabled: mqtt.offlinePersistPath empty");
+      _sdQueueEnabled = false;
+    } else {
+      if (xSemaphoreTake(_sdMutex, pdMS_TO_TICKS(250)) == pdTRUE) {
+        recountSdQueueLinesLocked();
+        xSemaphoreGive(_sdMutex);
+      }
+      _log->info(String("MQTT SD offline queue: path=") + _sdQueuePath +
+                 " maxLines=" + String(_sdQueueMaxLines) +
+                 " queued=" + String(_sdQueueLines));
+    }
+  }
 
   scheduleReconnect();
 }
@@ -394,6 +443,9 @@ String MqttClientManager::healthToJson() const {
   mqtt["altPortChecked"] = _diagAltChecked;
   mqtt["altPort"] = _diagAltPort;
   mqtt["altPortOpen"] = _diagAltOpen;
+  mqtt["offlineSdEnabled"] = _sdQueueEnabled;
+  mqtt["offlineSdQueued"] = _sdQueueLines;
+  mqtt["offlineSdDropped"] = _sdQueueDropped;
 
   JsonObject sd = checks["sd"].to<JsonObject>();
   sd["required"] = sdRequired;
@@ -470,6 +522,142 @@ void MqttClientManager::flushBuffers() {
   }
 }
 
+void MqttClientManager::recountSdQueueLinesLocked() {
+  _sdQueueLines = 0;
+  if (!_sdQueuePath.length()) return;
+  if (!SD.exists(_sdQueuePath)) return;
+
+  File f = SD.open(_sdQueuePath, FILE_READ);
+  if (!f) return;
+  while (f.available()) {
+    String line = f.readStringUntil('\n');
+    line.trim();
+    if (line.length()) _sdQueueLines++;
+  }
+  f.close();
+}
+
+bool MqttClientManager::parseQueuedLine(const String& line, BufferedMsg& out) const {
+  return parseBufferedMsgLine(line, out);
+}
+
+bool MqttClientManager::appendSdQueuedMessage(const BufferedMsg& m) {
+  if (!_sdQueueEnabled || !_sdMutex || !_sdQueuePath.length()) return false;
+  if (!_log->sdAvailable()) return false;
+
+  String line;
+  if (!serializeBufferedMsgLine(m, line)) return false;
+
+  if (xSemaphoreTake(_sdMutex, pdMS_TO_TICKS(200)) != pdTRUE) {
+    _stats->incrementSdWriteFails();
+    return false;
+  }
+
+  if (_sdQueueMaxLines > 0 && _sdQueueLines >= _sdQueueMaxLines) {
+    xSemaphoreGive(_sdMutex);
+    _sdQueueDropped++;
+    if ((_sdQueueDropped % 50U) == 1U) {
+      _log->warn(String("MQTT SD offline queue full; dropping new messages. dropped=") + String(_sdQueueDropped));
+    }
+    return false;
+  }
+
+  File f = SD.open(_sdQueuePath, FILE_APPEND);
+  if (!f) {
+    xSemaphoreGive(_sdMutex);
+    _stats->incrementSdWriteFails();
+    return false;
+  }
+  const size_t written = f.print(line);
+  f.flush();
+  f.close();
+  xSemaphoreGive(_sdMutex);
+
+  if (written != line.length()) {
+    _stats->incrementSdWriteFails();
+    return false;
+  }
+
+  _sdQueueLines++;
+  return true;
+}
+
+void MqttClientManager::flushSdQueue() {
+  if (!_connected) return;
+  if (!_sdQueueEnabled || !_sdMutex || !_sdQueuePath.length()) return;
+  if (!_log->sdAvailable()) return;
+
+  if (xSemaphoreTake(_sdMutex, pdMS_TO_TICKS(250)) != pdTRUE) return;
+  if (!SD.exists(_sdQueuePath)) {
+    _sdQueueLines = 0;
+    xSemaphoreGive(_sdMutex);
+    return;
+  }
+
+  String tmpPath = _sdQueuePath + ".tmp";
+  SD.remove(tmpPath);
+
+  File in = SD.open(_sdQueuePath, FILE_READ);
+  if (!in) {
+    xSemaphoreGive(_sdMutex);
+    return;
+  }
+
+  File out = SD.open(tmpPath, FILE_WRITE);
+  if (!out) {
+    in.close();
+    xSemaphoreGive(_sdMutex);
+    return;
+  }
+
+  uint32_t sent = 0;
+  uint32_t kept = 0;
+  uint32_t bad = 0;
+  bool keepRemainder = false;
+
+  while (in.available()) {
+    String raw = in.readStringUntil('\n');
+    raw.trim();
+    if (!raw.length()) continue;
+
+    if (keepRemainder || !_connected) {
+      out.println(raw);
+      kept++;
+      keepRemainder = true;
+      continue;
+    }
+
+    BufferedMsg m;
+    if (!parseQueuedLine(raw, m)) {
+      bad++;
+      continue;
+    }
+
+    _mqtt.publish(m.topic.c_str(), m.qos, m.retain, m.payload.c_str(), m.payload.length());
+    sent++;
+  }
+
+  in.close();
+  out.flush();
+  out.close();
+
+  SD.remove(_sdQueuePath);
+  if (kept > 0) {
+    (void)SD.rename(tmpPath, _sdQueuePath);
+  } else {
+    SD.remove(tmpPath);
+  }
+  _sdQueueLines = kept;
+  xSemaphoreGive(_sdMutex);
+
+  if (bad > 0) {
+    _log->warn(String("MQTT SD offline queue: dropped malformed lines=") + String(bad));
+  }
+  if (sent > 0 || kept > 0) {
+    _log->info(String("MQTT SD offline queue flush: sent=") + String(sent) + " remaining=" + String(kept));
+  }
+}
+
 void MqttClientManager::publishStatus(const char* status, bool retain) {
   if (!_cfg) return;
   if (!_cfg->mqtt.enabled) return;
@@ -499,7 +687,14 @@ void MqttClientManager::publishSensor(const SensorReading& r) {
   if (_connected) {
     _mqtt.publish(m.topic.c_str(), m.qos, m.retain, m.payload.c_str(), m.payload.length());
   } else {
-    ringPush(r.id, m);
+    if (_sdQueueEnabled) {
+      // Prefer persistent SD queue for disconnect/reboot survival.
+      if (!appendSdQueuedMessage(m)) {
+        ringPush(r.id, m);
+      }
+    } else {
+      ringPush(r.id, m);
+    }
   }
 }
 
@@ -537,8 +732,14 @@ void MqttClientManager::loop() {
       _mqtt.connect();
       scheduleReconnect();
     }
-  } else if (_cfg->mqtt.publishHealth && (int32_t)(now - _nextHealthPublishMs) >= 0) {
-    publishHealth();
-    _nextHealthPublishMs = now + _cfg->mqtt.healthIntervalMs;
+  } else {
+    if (_cfg->mqtt.publishHealth && (int32_t)(now - _nextHealthPublishMs) >= 0) {
+      publishHealth();
+      _nextHealthPublishMs = now + _cfg->mqtt.healthIntervalMs;
+    }
+    if (_sdQueueEnabled && (int32_t)(now - _nextSdQueueFlushMs) >= 0) {
+      flushSdQueue();
+      _nextSdQueueFlushMs = now + 2000;
+    }
   }
 }

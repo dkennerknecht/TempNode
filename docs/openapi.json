@@ -42,6 +42,10 @@
       "description": "Tail access for persisted sensor history."
     },
     {
+      "name": "config",
+      "description": "Secure runtime configuration retrieval and update."
+    },
+    {
       "name": "ota",
       "description": "Firmware and filesystem upload endpoints for OTA updates."
     }
@@ -285,6 +289,74 @@
           },
           "401": {
             "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/config": {
+      "get": {
+        "tags": ["config"],
+        "operationId": "getConfigRedacted",
+        "summary": "Get redacted runtime config",
+        "description": "Returns current config with secrets redacted. This endpoint always requires Bearer token auth and token mode.",
+        "security": [
+          {"bearerAuth": []}
+        ],
+        "responses": {
+          "200": {
+            "description": "Redacted config",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ConfigObject"}
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Token mode required"
+          }
+        }
+      },
+      "put": {
+        "tags": ["config"],
+        "operationId": "putConfig",
+        "summary": "Safely patch runtime config",
+        "description": "Merges provided patch into current config, validates, optionally dry-runs, persists to LittleFS, mirrors to SD when /config.json exists, and can reboot when requested and required.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/ConfigUpdateRequest"}
+            }
+          }
+        },
+        "security": [
+          {"bearerAuth": []}
+        ],
+        "responses": {
+          "200": {
+            "description": "Config update accepted",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ConfigUpdateResponse"}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid patch or validation/persistence failed",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ConfigUpdateResponse"}
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Token mode required"
           }
         }
       }
@@ -623,7 +695,10 @@
           "tcpProbeOpen",
           "altPortChecked",
           "altPort",
-          "altPortOpen"
+          "altPortOpen",
+          "offlineSdEnabled",
+          "offlineSdQueued",
+          "offlineSdDropped"
         ],
         "properties": {
           "required": {"type": "boolean"},
@@ -643,7 +718,10 @@
           "tcpProbeOpen": {"type": "boolean"},
           "altPortChecked": {"type": "boolean"},
           "altPort": {"type": "integer"},
-          "altPortOpen": {"type": "boolean"}
+          "altPortOpen": {"type": "boolean"},
+          "offlineSdEnabled": {"type": "boolean"},
+          "offlineSdQueued": {"type": "integer"},
+          "offlineSdDropped": {"type": "integer"}
         }
       },
       "HealthSd": {
@@ -763,6 +841,39 @@
           "persisted": {"type": "boolean"},
           "savedToLittleFs": {"type": "boolean"},
           "savedToSd": {"type": "boolean"},
+          "message": {"type": "string"}
+        }
+      },
+      "ConfigObject": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "ConfigUpdateRequest": {
+        "type": "object",
+        "properties": {
+          "dryRun": {"type": "boolean", "default": false},
+          "restart": {"type": "boolean", "default": false},
+          "config": {
+            "type": "object",
+            "description": "Partial config object to merge into current runtime config.",
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
+      },
+      "ConfigUpdateResponse": {
+        "type": "object",
+        "required": ["ok", "dryRun", "changed", "restartRequested", "restartRequired", "persisted", "savedToLittleFs", "savedToSd", "reboot"],
+        "properties": {
+          "ok": {"type": "boolean"},
+          "dryRun": {"type": "boolean"},
+          "changed": {"type": "boolean"},
+          "restartRequested": {"type": "boolean"},
+          "restartRequired": {"type": "boolean"},
+          "persisted": {"type": "boolean"},
+          "savedToLittleFs": {"type": "boolean"},
+          "savedToSd": {"type": "boolean"},
+          "reboot": {"type": "boolean"},
           "message": {"type": "string"}
         }
       },

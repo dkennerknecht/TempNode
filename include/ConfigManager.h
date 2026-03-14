@@ -24,6 +24,17 @@ public:
                                       bool* savedSd = nullptr,
                                       String* error = nullptr);
 
+  bool exportConfigJson(String& out, bool redactSecrets) const;
+
+  bool applyFullConfigJsonAndPersist(const String& fullJson,
+                                     bool sdAvailable,
+                                     bool dryRun,
+                                     bool* changed = nullptr,
+                                     bool* restartRequired = nullptr,
+                                     bool* savedLittleFs = nullptr,
+                                     bool* savedSd = nullptr,
+                                     String* error = nullptr);
+
   String deviceId() const;
 
 private:

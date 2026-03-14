@@ -128,7 +128,7 @@ Main config blocks:
 - `network`: hostname, DHCP/static IP fields
 - `sensors`: interval, DS18B20 resolution, conversion timeout
 - `rest`: enable + port
-- `mqtt`: host/port/auth/topic/reconnect/buffer/health publishing
+- `mqtt`: host/port/auth/topic/reconnect/offline buffering/health publishing
 - `history`: path, flush interval, retention days
 - `logging`: separate `consoleLevel` and `sdLevel`, rotation, retention
 - `metrics`: enable `/api/v1/metrics`
@@ -157,6 +157,11 @@ Optional behavior in token mode:
 - non-GET requests still require `Authorization: Bearer <token>`
 - legacy `security.enabled` is still accepted; `restAuthMode` is preferred
 
+`/api/v1/config` is always strict:
+
+- requires `restAuthMode="token"` and valid Bearer token
+- supports `PUT` patch with `dryRun` and `restart` flags
+
 ### Key Endpoints
 
 | Method | Path | Purpose |
@@ -168,6 +173,7 @@ Optional behavior in token mode:
 | GET | `/system` | Runtime diagnostics |
 | GET | `/metrics` | Runtime + persisted counters |
 | GET | `/history` | Tail history (`sensor`, `limit`) |
+| GET/PUT | `/config` | Secure config read/patch (`dryRun`, optional restart) |
 | POST | `/ota` | OTA upload endpoint (if enabled) |
 
 ### `/health` details
@@ -208,6 +214,13 @@ Health metrics publishing:
 
 - `mqtt.publishHealth` enables/disables health topic publishing
 - `mqtt.healthIntervalMs` controls publish interval
+
+Persistent offline queue on SD:
+
+- `mqtt.offlinePersistSdEnabled`
+- `mqtt.offlinePersistPath` (for example `/mqtt_offline.jsonl`)
+- `mqtt.offlinePersistMaxLines`
+- When enabled, disconnected sensor messages are persisted on SD and flushed after reconnect
 
 Contract reference:
 

@@ -35,6 +35,9 @@ struct MqttConfig {
   uint32_t reconnectMinMs;
   uint32_t reconnectMaxMs;
   uint16_t offlineBufferPerSensor; // ringbuffer size per sensor
+  bool offlinePersistSdEnabled;
+  String offlinePersistPath;
+  uint16_t offlinePersistMaxLines;
   bool publishHealth;
   uint32_t healthIntervalMs;
 };

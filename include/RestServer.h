@@ -59,6 +59,7 @@ private:
   mbedtls_sha256_context _otaSha256Ctx{};
 
   bool authOk(AsyncWebServerRequest* req) const;
+  bool tokenAuthStrict(AsyncWebServerRequest* req) const;
   void resetOtaState();
   bool otaPrecheck(AsyncWebServerRequest* req, const String& filename, OtaTarget target);
   bool otaFinalize(AsyncWebServerRequest* req, const char* uploadName);

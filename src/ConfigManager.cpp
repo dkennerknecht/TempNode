@@ -153,6 +153,9 @@ static void configToJson(const AppConfig& cfg, JsonDocument& doc) {
   doc["mqtt"]["deviceId"] = cfg.mqtt.deviceId;
   doc["mqtt"]["baseTopic"] = cfg.mqtt.baseTopic;
   doc["mqtt"]["offlineBufferPerSensor"] = cfg.mqtt.offlineBufferPerSensor;
+  doc["mqtt"]["offlinePersistSdEnabled"] = cfg.mqtt.offlinePersistSdEnabled;
+  doc["mqtt"]["offlinePersistPath"] = cfg.mqtt.offlinePersistPath;
+  doc["mqtt"]["offlinePersistMaxLines"] = cfg.mqtt.offlinePersistMaxLines;
   doc["mqtt"]["publishHealth"] = cfg.mqtt.publishHealth;
   doc["mqtt"]["healthIntervalMs"] = cfg.mqtt.healthIntervalMs;
   doc["mqtt"]["reconnectMinMs"] = cfg.mqtt.reconnectMinMs;
@@ -192,6 +195,55 @@ static void configToJson(const AppConfig& cfg, JsonDocument& doc) {
   doc["security"]["mqttPass"] = cfg.security.mqttPass;
 }
 
+static bool requiresRestartForConfigChange(const AppConfig& before, const AppConfig& after) {
+  // Network stack is initialized once in setup.
+  if (before.network.hostname != after.network.hostname ||
+      before.network.dhcp != after.network.dhcp ||
+      before.network.ip != after.network.ip ||
+      before.network.gw != after.network.gw ||
+      before.network.mask != after.network.mask ||
+      before.network.dns != after.network.dns) {
+    return true;
+  }
+
+  // REST server listen port/enable changes require server rebind.
+  if (before.rest.enabled != after.rest.enabled || before.rest.port != after.rest.port) {
+    return true;
+  }
+
+  // MQTT connection/session settings are snapshotted on begin.
+  if (before.mqtt.enabled != after.mqtt.enabled ||
+      before.mqtt.host != after.mqtt.host ||
+      before.mqtt.port != after.mqtt.port ||
+      before.mqtt.tls != after.mqtt.tls ||
+      before.mqtt.user != after.mqtt.user ||
+      before.mqtt.pass != after.mqtt.pass ||
+      before.mqtt.clientId != after.mqtt.clientId ||
+      before.mqtt.deviceId != after.mqtt.deviceId ||
+      before.mqtt.baseTopic != after.mqtt.baseTopic ||
+      before.mqtt.offlineBufferPerSensor != after.mqtt.offlineBufferPerSensor ||
+      before.mqtt.offlinePersistSdEnabled != after.mqtt.offlinePersistSdEnabled ||
+      before.mqtt.offlinePersistPath != after.mqtt.offlinePersistPath ||
+      before.mqtt.offlinePersistMaxLines != after.mqtt.offlinePersistMaxLines) {
+    return true;
+  }
+
+  // Sensor driver settings are initialized once (interval can be applied live).
+  if (before.sensors.resolutionBits != after.sensors.resolutionBits ||
+      before.sensors.conversionTimeoutMs != after.sensors.conversionTimeoutMs) {
+    return true;
+  }
+
+  // Watchdog task config is initialized once.
+  if (before.watchdog.enabled != after.watchdog.enabled ||
+      before.watchdog.timeoutMs != after.watchdog.timeoutMs ||
+      before.watchdog.panicReset != after.watchdog.panicReset) {
+    return true;
+  }
+
+  return false;
+}
+
 static bool isValidLogLevelName(const String& level) {
   return level == "DEBUG" || level == "INFO" || level == "WARN" || level == "ERROR";
 }
@@ -213,6 +265,9 @@ void ConfigManager::applyDefaults() {
   _cfg.configVersion = kCurrentConfigVersion;
   _cfg.security.restAuthMode = "anonymous";
   _cfg.security.allowAnonymousGet = false;
+  _cfg.mqtt.offlinePersistSdEnabled = false;
+  _cfg.mqtt.offlinePersistPath = "/mqtt_offline.jsonl";
+  _cfg.mqtt.offlinePersistMaxLines = 1000;
   _cfg.mqtt.publishHealth = true;
   _cfg.mqtt.healthIntervalMs = 15000;
   syncFeatureFlags();
@@ -279,6 +334,9 @@ bool ConfigManager::parseJson(const String& json) {
   _cfg.mqtt.deviceId = String((const char*)(doc["mqtt"]["deviceId"] | _cfg.mqtt.deviceId.c_str()));
   _cfg.mqtt.baseTopic = String((const char*)(doc["mqtt"]["baseTopic"] | _cfg.mqtt.baseTopic.c_str()));
   _cfg.mqtt.offlineBufferPerSensor = doc["mqtt"]["offlineBufferPerSensor"] | _cfg.mqtt.offlineBufferPerSensor;
+  _cfg.mqtt.offlinePersistSdEnabled = doc["mqtt"]["offlinePersistSdEnabled"] | _cfg.mqtt.offlinePersistSdEnabled;
+  _cfg.mqtt.offlinePersistPath = String((const char*)(doc["mqtt"]["offlinePersistPath"] | _cfg.mqtt.offlinePersistPath.c_str()));
+  _cfg.mqtt.offlinePersistMaxLines = doc["mqtt"]["offlinePersistMaxLines"] | _cfg.mqtt.offlinePersistMaxLines;
   _cfg.mqtt.reconnectMinMs = doc["mqtt"]["reconnectMinMs"] | _cfg.mqtt.reconnectMinMs;
   _cfg.mqtt.reconnectMaxMs = doc["mqtt"]["reconnectMaxMs"] | _cfg.mqtt.reconnectMaxMs;
   _cfg.mqtt.publishHealth = doc["mqtt"]["publishHealth"] | _cfg.mqtt.publishHealth;
@@ -322,6 +380,15 @@ bool ConfigManager::parseJson(const String& json) {
 bool ConfigManager::validate() {
   bool ok = true;
 
+  if (_cfg.configVersion == 0 || _cfg.configVersion > kCurrentConfigVersion) {
+    _log->error(String("config: unsupported configVersion ") + (unsigned)_cfg.configVersion);
+    ok = false;
+  }
+  if (_cfg.configVersion < kCurrentConfigVersion) {
+    _log->warn(String("config: upgrading configVersion to current ") + (unsigned)kCurrentConfigVersion);
+    _cfg.configVersion = kCurrentConfigVersion;
+  }
+
   if (!_cfg.network.hostname.length()) {
     _log->error("config: network.hostname is required");
     ok = false;
@@ -344,6 +411,8 @@ bool ConfigManager::validate() {
 
   if (_cfg.mqtt.reconnectMinMs < 250) _cfg.mqtt.reconnectMinMs = 250;
   if (_cfg.mqtt.reconnectMaxMs < _cfg.mqtt.reconnectMinMs) _cfg.mqtt.reconnectMaxMs = _cfg.mqtt.reconnectMinMs;
+  if (_cfg.mqtt.offlinePersistMaxLines < 100) _cfg.mqtt.offlinePersistMaxLines = 100;
+  if (_cfg.mqtt.offlinePersistMaxLines > 10000) _cfg.mqtt.offlinePersistMaxLines = 10000;
   if (_cfg.mqtt.healthIntervalMs == 0) _cfg.mqtt.healthIntervalMs = 15000;
   if (_cfg.mqtt.healthIntervalMs < 1000) {
     _log->warn("config: mqtt.healthIntervalMs too low, forcing 1000ms");
@@ -371,6 +440,10 @@ bool ConfigManager::validate() {
     }
     if (!_cfg.mqtt.baseTopic.length()) {
       _log->error("config: mqtt.baseTopic is required when mqtt.enabled=true");
+      ok = false;
+    }
+    if (_cfg.mqtt.offlinePersistSdEnabled && !_cfg.mqtt.offlinePersistPath.length()) {
+      _log->error("config: mqtt.offlinePersistPath is required when mqtt.offlinePersistSdEnabled=true");
       ok = false;
     }
   }
@@ -529,6 +602,84 @@ bool ConfigManager::updateSensorIntervalAndPersist(uint32_t requestedMs,
   if (savedLittleFs) *savedLittleFs = littleFsOk;
   if (savedSd) *savedSd = sdOk;
   return ok;
+}
+
+bool ConfigManager::exportConfigJson(String& out, bool redactSecrets) const {
+  JsonDocument doc;
+  configToJson(_cfg, doc);
+  if (redactSecrets) {
+    auto redact = [&doc](const char* a, const char* b) {
+      String v = String((const char*)(doc[a][b] | ""));
+      doc[a][b] = v.length() ? "***" : "";
+    };
+    redact("mqtt", "pass");
+    redact("security", "restToken");
+    redact("security", "restPass");
+    redact("security", "mqttPass");
+  }
+  return serializeJson(doc, out) > 0;
+}
+
+bool ConfigManager::applyFullConfigJsonAndPersist(const String& fullJson,
+                                                  bool sdAvailable,
+                                                  bool dryRun,
+                                                  bool* changed,
+                                                  bool* restartRequired,
+                                                  bool* savedLittleFs,
+                                                  bool* savedSd,
+                                                  String* error) {
+  if (changed) *changed = false;
+  if (restartRequired) *restartRequired = false;
+  if (savedLittleFs) *savedLittleFs = false;
+  if (savedSd) *savedSd = false;
+  if (error) *error = "";
+
+  AppConfig before = _cfg;
+  String beforeJson;
+  (void)exportConfigJson(beforeJson, false);
+
+  applyDefaults();
+  if (!parseJson(fullJson)) {
+    _cfg = before;
+    if (error) *error = "invalid config JSON";
+    return false;
+  }
+
+  const bool valid = validate();
+  syncFeatureFlags();
+  if (!valid) {
+    _cfg = before;
+    if (error) *error = "config validation failed";
+    return false;
+  }
+
+  String afterJson;
+  (void)exportConfigJson(afterJson, false);
+  const bool anyChanged = (afterJson != beforeJson);
+  const bool needRestart = requiresRestartForConfigChange(before, _cfg);
+
+  if (changed) *changed = anyChanged;
+  if (restartRequired) *restartRequired = needRestart;
+
+  if (dryRun) {
+    _cfg = before;
+    return true;
+  }
+
+  if (!anyChanged) {
+    return true;
+  }
+
+  bool littleFsOk = false;
+  bool sdOk = false;
+  const bool persisted = persistCurrentConfig(sdAvailable, &littleFsOk, &sdOk, error);
+  if (!persisted && !littleFsOk) {
+    _cfg = before;
+  }
+
+  if (savedLittleFs) *savedLittleFs = littleFsOk;
+  if (savedSd) *savedSd = sdOk;
+  return persisted;
 }
 
 bool ConfigManager::loadFromSources(bool sdAvailable, bool littleFsAvailable) {

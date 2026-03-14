@@ -290,6 +290,33 @@ bool RestServer::authOk(AsyncWebServerRequest* req) const {
   return false;
 }
 
+bool RestServer::tokenAuthStrict(AsyncWebServerRequest* req) const {
+  if (_cfg->security.restAuthMode != "token" || !_cfg->security.restToken.length()) {
+    req->send(403, "application/json", "{\"error\":\"token auth mode required for this endpoint\"}");
+    return false;
+  }
+
+  if (!req->hasHeader("Authorization")) {
+    req->send(401, "application/json", "{\"error\":\"authorization header missing\"}");
+    return false;
+  }
+
+  const AsyncWebHeader* h = req->getHeader("Authorization");
+  String v = h ? h->value() : "";
+  if (!v.startsWith("Bearer ")) {
+    req->send(401, "application/json", "{\"error\":\"bearer token required\"}");
+    return false;
+  }
+
+  String t = v.substring(7);
+  if (t != _cfg->security.restToken) {
+    req->send(401, "application/json", "{\"error\":\"invalid token\"}");
+    return false;
+  }
+
+  return true;
+}
+
 static void sendJson(AsyncWebServerRequest* req, JsonDocument& doc, int code = 200) {
   String out;
   serializeJson(doc, out);
@@ -300,6 +327,52 @@ static void sendError(AsyncWebServerRequest* req, int code, const char* msg) {
   JsonDocument doc;
   doc["error"] = msg;
   sendJson(req, doc, code);
+}
+
+static bool parseJsonBody(AsyncWebServerRequest* req, JsonDocument& out, String& err) {
+  if (!req->hasParam("plain", true)) {
+    err = "missing JSON body";
+    return false;
+  }
+  const AsyncWebParameter* p = req->getParam("plain", true);
+  if (!p) {
+    err = "missing JSON body";
+    return false;
+  }
+  auto de = deserializeJson(out, p->value());
+  if (de != DeserializationError::Ok) {
+    err = String("invalid JSON: ") + de.c_str();
+    return false;
+  }
+  return true;
+}
+
+// RFC7386-style merge patch for object trees.
+static void mergeJsonPatch(JsonVariant dst, JsonVariantConst src) {
+  if (!src.is<JsonObjectConst>()) {
+    dst.set(src);
+    return;
+  }
+
+  JsonObject dstObj = dst.as<JsonObject>();
+  JsonObjectConst srcObj = src.as<JsonObjectConst>();
+  for (JsonPairConst kv : srcObj) {
+    const String key = kv.key().c_str();
+    JsonVariantConst srcVal = kv.value();
+    if (srcVal.isNull()) {
+      dstObj.remove(key);
+      continue;
+    }
+
+    if (srcVal.is<JsonObjectConst>()) {
+      if (!dstObj[key].is<JsonObject>()) {
+        dstObj[key].to<JsonObject>();
+      }
+      mergeJsonPatch(dstObj[key], srcVal);
+    } else {
+      dstObj[key] = srcVal;
+    }
+  }
 }
 
 void RestServer::begin(const AppConfig& cfg,
@@ -415,6 +488,9 @@ void RestServer::setupRoutes() {
     mqtt["altPortChecked"] = _mqtt->lastAltPortChecked();
     mqtt["altPort"] = _mqtt->lastAltPort();
     mqtt["altPortOpen"] = _mqtt->lastAltPortOpen();
+    mqtt["offlineSdEnabled"] = _mqtt->offlineSdEnabled();
+    mqtt["offlineSdQueued"] = _mqtt->offlineSdQueued();
+    mqtt["offlineSdDropped"] = _mqtt->offlineSdDropped();
 
     JsonObject sd = checks["sd"].to<JsonObject>();
     sd["required"] = sdRequired;
@@ -576,6 +652,99 @@ void RestServer::setupRoutes() {
 
   _srv->on("/api/v1/sensors/interval", HTTP_POST, setIntervalHandler);
   _srv->on("/api/v1/sensors/interval", HTTP_PUT, setIntervalHandler);
+
+  _srv->on("/api/v1/config", HTTP_GET, [this](AsyncWebServerRequest* req) {
+    if (!tokenAuthStrict(req)) return;
+    if (!_cfgManager) return sendError(req, 500, "config manager unavailable");
+
+    String out;
+    if (!_cfgManager->exportConfigJson(out, true)) {
+      return sendError(req, 500, "failed to export config");
+    }
+    req->send(200, "application/json", out);
+  });
+
+  _srv->on("/api/v1/config", HTTP_PUT, [this](AsyncWebServerRequest* req) {
+    if (!tokenAuthStrict(req)) return;
+    if (!_cfgManager) return sendError(req, 500, "config manager unavailable");
+
+    JsonDocument body;
+    String parseErr;
+    if (!parseJsonBody(req, body, parseErr)) {
+      JsonDocument errDoc;
+      errDoc["error"] = parseErr;
+      sendJson(req, errDoc, 400);
+      return;
+    }
+
+    bool dryRun = body["dryRun"] | false;
+    bool restartRequested = body["restart"] | false;
+    JsonVariantConst patch = body["config"].is<JsonObjectConst>() ? body["config"].as<JsonVariantConst>()
+                                                                  : body.as<JsonVariantConst>();
+    if (!patch.is<JsonObjectConst>()) {
+      return sendError(req, 400, "request must be JSON object or contain object field 'config'");
+    }
+
+    String baseJson;
+    if (!_cfgManager->exportConfigJson(baseJson, false)) {
+      return sendError(req, 500, "failed to export current config");
+    }
+
+    JsonDocument merged;
+    auto de = deserializeJson(merged, baseJson);
+    if (de != DeserializationError::Ok || !merged.is<JsonObject>()) {
+      return sendError(req, 500, "failed to parse current config snapshot");
+    }
+    mergeJsonPatch(merged.as<JsonVariant>(), patch);
+
+    String mergedJson;
+    if (serializeJson(merged, mergedJson) == 0) {
+      return sendError(req, 500, "failed to serialize merged config");
+    }
+
+    bool changed = false;
+    bool restartRequired = false;
+    bool savedLittleFs = false;
+    bool savedSd = false;
+    String applyErr;
+    bool ok = _cfgManager->applyFullConfigJsonAndPersist(
+      mergedJson,
+      _log->sdAvailable(),
+      dryRun,
+      &changed,
+      &restartRequired,
+      &savedLittleFs,
+      &savedSd,
+      &applyErr
+    );
+
+    if (ok && !dryRun) {
+      // Apply settings that are safe to adjust live.
+      _log->configure(_cfg->logging);
+      if (_sensors) _sensors->setIntervalMs(_cfg->sensors.intervalMs);
+    }
+
+    JsonDocument resp;
+    resp["ok"] = ok;
+    resp["dryRun"] = dryRun;
+    resp["changed"] = changed;
+    resp["restartRequested"] = restartRequested;
+    resp["restartRequired"] = restartRequired;
+    resp["savedToLittleFs"] = savedLittleFs;
+    resp["savedToSd"] = savedSd;
+    resp["persisted"] = ok && !dryRun;
+    if (!ok) resp["message"] = applyErr.length() ? applyErr : "config update failed";
+
+    const bool shouldRestart = ok && !dryRun && changed && restartRequested && restartRequired;
+    resp["reboot"] = shouldRestart;
+    sendJson(req, resp, ok ? 200 : 400);
+
+    if (shouldRestart) {
+      _log->warn("config updated, reboot requested");
+      ESP.restart();
+    }
+  });
+
   _srv->on("/api/v1/system", HTTP_GET, [this](AsyncWebServerRequest* req) {
     if (!authOk(req)) return;
     JsonDocument doc;
