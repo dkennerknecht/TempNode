@@ -1,0 +1,265 @@
+asyncapi: 2.6.0
+id: urn:tempnode:mqtt:api
+info:
+  title: TempNode MQTT API
+  version: 1.0.0
+  description: |
+    MQTT topic contract for TempNode telemetry and health publishing.
+    The node publishes retained messages below `device/<deviceId>/...`.
+  license:
+    name: UNLICENSED
+  contact:
+    name: TempNode Maintainers
+    url: https://github.com/dkennerknecht/TempNode
+    email: maintainers@example.com
+
+tags:
+  - name: mqtt
+    description: MQTT publish topics exposed by TempNode.
+  - name: telemetry
+    description: Sensor, system, and health telemetry payloads.
+
+defaultContentType: application/json
+
+servers:
+  production:
+    url: "{host}:{port}"
+    protocol: mqtt
+    description: MQTT broker used by TempNode
+    variables:
+      host:
+        default: "192.168.1.119"
+      port:
+        default: "1883"
+    security:
+      - optionalUserPassword: []
+
+channels:
+  device/{deviceId}/status:
+    description: Online/offline node status (LWT-compatible, retained).
+    parameters:
+      deviceId:
+        description: Configured `mqtt.deviceId` or generated fallback device id.
+        schema:
+          type: string
+    subscribe:
+      operationId: receiveStatus
+      summary: Receive node online/offline status.
+      message:
+        $ref: "#/components/messages/StatusMessage"
+
+  device/{deviceId}/system:
+    description: Periodic runtime snapshot (retained).
+    parameters:
+      deviceId:
+        description: Configured `mqtt.deviceId` or generated fallback device id.
+        schema:
+          type: string
+    subscribe:
+      operationId: receiveSystem
+      summary: Receive system diagnostics.
+      message:
+        $ref: "#/components/messages/SystemMessage"
+
+  device/{deviceId}/health:
+    description: Periodic detailed health metrics (retained).
+    parameters:
+      deviceId:
+        description: Configured `mqtt.deviceId` or generated fallback device id.
+        schema:
+          type: string
+    subscribe:
+      operationId: receiveHealth
+      summary: Receive detailed health payload.
+      message:
+        $ref: "#/components/messages/HealthMessage"
+
+  device/{deviceId}/temps/{sensorId}:
+    description: Latest value per sensor (retained).
+    parameters:
+      deviceId:
+        description: Configured `mqtt.deviceId` or generated fallback device id.
+        schema:
+          type: string
+      sensorId:
+        description: 1-Wire ROM ID in uppercase hex.
+        schema:
+          type: string
+    subscribe:
+      operationId: receiveTemperature
+      summary: Receive latest temperature reading for one sensor.
+      message:
+        $ref: "#/components/messages/TemperatureMessage"
+
+components:
+  securitySchemes:
+    optionalUserPassword:
+      type: userPassword
+      description: |
+        Broker may require username/password.
+        TempNode can also connect anonymously when `mqtt.user` and `mqtt.pass` are empty.
+
+  messageTraits:
+    retainedQos0:
+      bindings:
+        mqtt:
+          qos: 0
+          retain: true
+
+  messages:
+    StatusMessage:
+      name: StatusMessage
+      messageId: statusMessage
+      title: Node status
+      summary: Published on connect/disconnect transitions.
+      traits:
+        - $ref: "#/components/messageTraits/retainedQos0"
+      payload:
+        $ref: "#/components/schemas/StatusPayload"
+
+    SystemMessage:
+      name: SystemMessage
+      messageId: systemMessage
+      title: System snapshot
+      summary: Periodic runtime snapshot.
+      traits:
+        - $ref: "#/components/messageTraits/retainedQos0"
+      payload:
+        $ref: "#/components/schemas/SystemPayload"
+
+    HealthMessage:
+      name: HealthMessage
+      messageId: healthMessage
+      title: Health snapshot
+      summary: Periodic detailed health payload aligned with REST `/api/v1/health`.
+      traits:
+        - $ref: "#/components/messageTraits/retainedQos0"
+      payload:
+        $ref: "#/components/schemas/HealthPayload"
+
+    TemperatureMessage:
+      name: TemperatureMessage
+      messageId: temperatureMessage
+      title: Sensor reading
+      summary: Latest reading for one DS18B20 sensor.
+      traits:
+        - $ref: "#/components/messageTraits/retainedQos0"
+      payload:
+        $ref: "#/components/schemas/TemperaturePayload"
+
+  schemas:
+    StatusPayload:
+      type: object
+      additionalProperties: false
+      required:
+        - timestamp
+        - status
+        - ip
+        - link
+      properties:
+        timestamp:
+          type: integer
+          format: int64
+        status:
+          type: string
+          enum: [online, offline]
+        ip:
+          type: string
+        link:
+          type: boolean
+
+    SystemPayload:
+      type: object
+      additionalProperties: false
+      required:
+        - timestamp
+        - ip
+        - link
+        - mqtt
+        - heap
+        - uptimeMs
+      properties:
+        timestamp:
+          type: integer
+          format: int64
+        ip:
+          type: string
+        link:
+          type: boolean
+        mqtt:
+          type: boolean
+        heap:
+          type: integer
+        uptimeMs:
+          type: integer
+          format: int64
+
+    TemperaturePayload:
+      type: object
+      additionalProperties: false
+      required:
+        - timestamp
+        - value
+        - unit
+        - sensorId
+        - status
+        - timeSource
+        - timeValid
+      properties:
+        timestamp:
+          type: integer
+          format: int64
+        value:
+          type: number
+        unit:
+          type: string
+          enum: ["C"]
+        sensorId:
+          type: string
+        status:
+          type: integer
+        timeSource:
+          type: integer
+          description: 0 = NTP, 1 = UPTIME
+        timeValid:
+          type: boolean
+
+    HealthPayload:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - timestamp
+        - checks
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        timestamp:
+          type: integer
+          format: int64
+        checks:
+          type: object
+          additionalProperties: true
+          required:
+            - network
+            - mqtt
+            - sd
+            - time
+            - ota_state
+          properties:
+            network:
+              type: object
+              additionalProperties: true
+            mqtt:
+              type: object
+              additionalProperties: true
+            sd:
+              type: object
+              additionalProperties: true
+            time:
+              type: object
+              additionalProperties: true
+            ota_state:
+              type: object
+              additionalProperties: true

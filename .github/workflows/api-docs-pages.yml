@@ -1,12 +1,14 @@
-name: API Docs (ReDoc + Pages)
+name: API Docs (ReDoc + AsyncAPI + Pages)
 
 on:
   push:
     branches: ["main"]
     paths:
       - "docs/openapi.json"
+      - "docs/asyncapi.yaml"
       - "src/RestServer.cpp"
       - "scripts/contract_test_openapi.py"
+      - "scripts/build_api_docs.sh"
       - ".github/workflows/api-docs-pages.yml"
       - "README.md"
   workflow_dispatch:
@@ -46,11 +48,17 @@ jobs:
       - name: Lint OpenAPI
         run: redocly lint docs/openapi.json
 
+      - name: Validate AsyncAPI
+        run: SUPPRESS_NO_CONFIG_WARNING=true NODE_ENV=development npx --yes @asyncapi/cli@latest validate docs/asyncapi.yaml
+
       - name: Build ReDoc static page
         run: |
           mkdir -p site
           redocly build-docs docs/openapi.json --output site/index.html
           cp docs/openapi.json site/openapi.json
+          mkdir -p site/mqtt
+          SUPPRESS_NO_CONFIG_WARNING=true NODE_ENV=development npx --yes @asyncapi/cli@latest generate fromTemplate docs/asyncapi.yaml @asyncapi/html-template --output site/mqtt --force-write --no-interactive --install --param singleFile=true
+          cp docs/asyncapi.yaml site/asyncapi.yaml
           touch site/.nojekyll
 
       - name: Configure Pages

@@ -21,7 +21,7 @@ It reads DS18B20 sensors, exposes data over REST, publishes to MQTT, stores logs
 - [Quick Start](#quick-start)
 - [Configuration (`/config.json`)](#configuration-configjson)
 - [REST API](#rest-api)
-- [REST API Docs (ReDoc + GitHub Pages)](#rest-api-docs-redoc--github-pages)
+- [API Docs (ReDoc + AsyncAPI + GitHub Pages)](#api-docs-redoc--asyncapi--github-pages)
 - [MQTT](#mqtt)
 - [OTA Update](#ota-update)
 - [SD Persistence](#sd-persistence)
@@ -204,23 +204,26 @@ Basic auth:
 curl -u api:yourpassword "http://$NODE_IP/api/v1/system"
 ```
 
-## REST API Docs (ReDoc + GitHub Pages)
+## API Docs (ReDoc + AsyncAPI + GitHub Pages)
 
-This repository includes an automated ReDoc build and GitHub Pages deployment:
+This repository includes automated REST and MQTT docs build + GitHub Pages deployment:
 
 - Workflow: [`.github/workflows/api-docs-pages.yml`](.github/workflows/api-docs-pages.yml)
-- Input spec: [`docs/openapi.json`](docs/openapi.json)
+- REST spec: [`docs/openapi.json`](docs/openapi.json)
+- MQTT spec: [`docs/asyncapi.yaml`](docs/asyncapi.yaml)
 - Contract check: [`scripts/contract_test_openapi.py`](scripts/contract_test_openapi.py)
 
 ### Hosted docs URL
 
 After enabling GitHub Pages for this repository (source: **GitHub Actions**), docs are published at:
 
-`https://<your-github-user-or-org>.github.io/TempNode/`
+- REST docs (ReDoc): `https://dkennerknecht.github.io/TempNode/`
+- MQTT docs (AsyncAPI HTML): `https://dkennerknecht.github.io/TempNode/mqtt/`
 
-Raw OpenAPI spec is also published as:
+Published raw specs:
 
-`https://<your-github-user-or-org>.github.io/TempNode/openapi.json`
+- OpenAPI: `https://dkennerknecht.github.io/TempNode/openapi.json`
+- AsyncAPI: `https://dkennerknecht.github.io/TempNode/asyncapi.yaml`
 
 ### Local generation
 
@@ -232,7 +235,9 @@ This runs:
 
 - OpenAPI contract test
 - Redocly lint
+- AsyncAPI validation
 - ReDoc static HTML build to `site/index.html`
+- AsyncAPI MQTT HTML build to `site/mqtt/index.html`
 
 ## MQTT
 
@@ -419,10 +424,12 @@ pio device monitor
 ## API Contract
 
 - OpenAPI spec: [`docs/openapi.json`](docs/openapi.json)
+- AsyncAPI spec: [`docs/asyncapi.yaml`](docs/asyncapi.yaml)
 - Contract test (spec vs. registered REST routes):
 
 ```bash
 python3 scripts/contract_test_openapi.py
+npx --yes @asyncapi/cli@latest validate docs/asyncapi.yaml
 ```
 
 ## License
