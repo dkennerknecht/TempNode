@@ -161,6 +161,7 @@ Optional behavior in token mode:
 
 - requires `restAuthMode="token"` and valid Bearer token
 - supports `PUT` patch with `dryRun` and `restart` flags
+- includes dedicated MQTT section endpoints: `GET/PUT /api/v1/config/mqtt`
 
 ### Key Endpoints
 
@@ -174,6 +175,7 @@ Optional behavior in token mode:
 | GET | `/metrics` | Runtime + persisted counters |
 | GET | `/history` | Tail history (`sensor`, `limit`) |
 | GET/PUT | `/config` | Secure config read/patch (`dryRun`, optional restart) |
+| GET/PUT | `/config/mqtt` | Secure MQTT-only config read/patch |
 | POST | `/ota` | OTA upload endpoint (if enabled) |
 
 ### `/health` details
@@ -221,6 +223,31 @@ Persistent offline queue on SD:
 - `mqtt.offlinePersistPath` (for example `/mqtt_offline.jsonl`)
 - `mqtt.offlinePersistMaxLines`
 - When enabled, disconnected sensor messages are persisted on SD and flushed after reconnect
+
+REST config update (token mode):
+
+- Read current MQTT config: `GET /api/v1/config/mqtt`
+- Patch MQTT config only: `PUT /api/v1/config/mqtt`
+- Request body can be either direct MQTT fields or wrapped in `{"mqtt": {...}}`
+
+Example:
+
+```bash
+curl -X PUT "http://<NODE_IP>/api/v1/config/mqtt" \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "dryRun": false,
+    "restart": true,
+    "mqtt": {
+      "host": "192.168.1.119",
+      "port": 1883,
+      "user": "",
+      "pass": "",
+      "baseTopic": "device"
+    }
+  }'
+```
 
 Contract reference:
 

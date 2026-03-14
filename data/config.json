@@ -1,10 +1,11 @@
 {
+  "configVersion": 2,
   "network": {
     "hostname": "esp32-s3-eth",
     "dhcp": true
   },
   "sensors": {
-    "intervalMs": 10000,
+    "intervalMs": 5000,
     "resolutionBits": 12,
     "conversionTimeoutMs": 1000
   },
@@ -14,10 +15,15 @@
   },
   "mqtt": {
     "enabled": true,
-    "host": "192.168.1.119",
+    "host": "192.168.10.202",
     "port": 1883,
+    "user": "loxberry",
+    "pass": "loxberrymqtt",
     "baseTopic": "device",
     "offlineBufferPerSensor": 20,
+    "offlinePersistSdEnabled": true,
+    "offlinePersistPath": "/mqtt_offline.jsonl",
+    "offlinePersistMaxLines": 1000,
     "publishHealth": true,
     "healthIntervalMs": 15000,
     "reconnectMinMs": 1000,
@@ -30,7 +36,7 @@
     "retentionDays": 30
   },
   "logging": {
-    "consoleLevel": "DEBUG",
+    "consoleLevel": "INFO",
     "sdLevel": "INFO",
     "sdEnabled": true,
     "rotateDaily": true,
@@ -40,22 +46,23 @@
     "enabled": true
   },
   "ota": {
-    "enabled": false,
-    "allowInsecureHttp": false,
+    "enabled": true,
+    "allowInsecureHttp": true,
     "allowDowngrade": false,
     "requireHashHeader": true,
     "healthConfirmMs": 30000,
     "requireNetworkForConfirm": true
   },
   "watchdog": {
-    "enabled": false,
+    "enabled": true,
     "timeoutMs": 15000,
     "panicReset": true
   },
   "security": {
-    "enabled": false,
-    "restUser": "api",
-    "restPass": "CHANGE_ME_STRONG_PASSWORD",
-    "restToken": ""
+    "enabled": true,
+    "restAuthMode": "anonymous",
+    "allowAnonymousGet": true,
+    "restAuthMode": "token",
+    "restToken": "0U96ZKLNJzhLGrN9doxecGWiZYCRrlJa"
   }
 }

@@ -653,53 +653,37 @@ void RestServer::setupRoutes() {
   _srv->on("/api/v1/sensors/interval", HTTP_POST, setIntervalHandler);
   _srv->on("/api/v1/sensors/interval", HTTP_PUT, setIntervalHandler);
 
-  _srv->on("/api/v1/config", HTTP_GET, [this](AsyncWebServerRequest* req) {
-    if (!tokenAuthStrict(req)) return;
-    if (!_cfgManager) return sendError(req, 500, "config manager unavailable");
-
-    String out;
-    if (!_cfgManager->exportConfigJson(out, true)) {
-      return sendError(req, 500, "failed to export config");
-    }
-    req->send(200, "application/json", out);
-  });
-
-  _srv->on("/api/v1/config", HTTP_PUT, [this](AsyncWebServerRequest* req) {
-    if (!tokenAuthStrict(req)) return;
-    if (!_cfgManager) return sendError(req, 500, "config manager unavailable");
-
-    JsonDocument body;
-    String parseErr;
-    if (!parseJsonBody(req, body, parseErr)) {
-      JsonDocument errDoc;
-      errDoc["error"] = parseErr;
-      sendJson(req, errDoc, 400);
+  auto applyConfigPatch = [this](AsyncWebServerRequest* req,
+                                 JsonVariantConst patch,
+                                 bool dryRun,
+                                 bool restartRequested) {
+    if (!_cfgManager) {
+      sendError(req, 500, "config manager unavailable");
       return;
     }
-
-    bool dryRun = body["dryRun"] | false;
-    bool restartRequested = body["restart"] | false;
-    JsonVariantConst patch = body["config"].is<JsonObjectConst>() ? body["config"].as<JsonVariantConst>()
-                                                                  : body.as<JsonVariantConst>();
     if (!patch.is<JsonObjectConst>()) {
-      return sendError(req, 400, "request must be JSON object or contain object field 'config'");
+      sendError(req, 400, "request patch must be a JSON object");
+      return;
     }
 
     String baseJson;
     if (!_cfgManager->exportConfigJson(baseJson, false)) {
-      return sendError(req, 500, "failed to export current config");
+      sendError(req, 500, "failed to export current config");
+      return;
     }
 
     JsonDocument merged;
     auto de = deserializeJson(merged, baseJson);
     if (de != DeserializationError::Ok || !merged.is<JsonObject>()) {
-      return sendError(req, 500, "failed to parse current config snapshot");
+      sendError(req, 500, "failed to parse current config snapshot");
+      return;
     }
     mergeJsonPatch(merged.as<JsonVariant>(), patch);
 
     String mergedJson;
     if (serializeJson(merged, mergedJson) == 0) {
-      return sendError(req, 500, "failed to serialize merged config");
+      sendError(req, 500, "failed to serialize merged config");
+      return;
     }
 
     bool changed = false;
@@ -743,6 +727,104 @@ void RestServer::setupRoutes() {
       _log->warn("config updated, reboot requested");
       ESP.restart();
     }
+  };
+
+  _srv->on("/api/v1/config", HTTP_GET, [this](AsyncWebServerRequest* req) {
+    if (!tokenAuthStrict(req)) return;
+    if (!_cfgManager) return sendError(req, 500, "config manager unavailable");
+
+    String out;
+    if (!_cfgManager->exportConfigJson(out, true)) {
+      return sendError(req, 500, "failed to export config");
+    }
+    req->send(200, "application/json", out);
+  });
+
+  _srv->on("/api/v1/config", HTTP_PUT, [this, applyConfigPatch](AsyncWebServerRequest* req) {
+    if (!tokenAuthStrict(req)) return;
+    if (!_cfgManager) return sendError(req, 500, "config manager unavailable");
+
+    JsonDocument body;
+    String parseErr;
+    if (!parseJsonBody(req, body, parseErr)) {
+      JsonDocument errDoc;
+      errDoc["error"] = parseErr;
+      sendJson(req, errDoc, 400);
+      return;
+    }
+
+    bool dryRun = body["dryRun"] | false;
+    bool restartRequested = body["restart"] | false;
+    JsonVariantConst patch = body["config"].is<JsonObjectConst>() ? body["config"].as<JsonVariantConst>()
+                                                                  : body.as<JsonVariantConst>();
+    if (!patch.is<JsonObjectConst>()) return sendError(req, 400, "request must be JSON object or contain object field 'config'");
+    applyConfigPatch(req, patch, dryRun, restartRequested);
+  });
+
+  _srv->on("/api/v1/config/mqtt", HTTP_GET, [this](AsyncWebServerRequest* req) {
+    if (!tokenAuthStrict(req)) return;
+
+    JsonDocument doc;
+    JsonObject mqtt = doc.to<JsonObject>();
+    mqtt["enabled"] = _cfg->mqtt.enabled;
+    mqtt["host"] = _cfg->mqtt.host;
+    mqtt["port"] = _cfg->mqtt.port;
+    mqtt["tls"] = _cfg->mqtt.tls;
+    mqtt["user"] = _cfg->mqtt.user;
+    mqtt["pass"] = _cfg->mqtt.pass.length() ? "***" : "";
+    mqtt["passSet"] = _cfg->mqtt.pass.length() > 0;
+    mqtt["clientId"] = _cfg->mqtt.clientId;
+    mqtt["deviceId"] = _cfg->mqtt.deviceId;
+    mqtt["baseTopic"] = _cfg->mqtt.baseTopic;
+    mqtt["reconnectMinMs"] = _cfg->mqtt.reconnectMinMs;
+    mqtt["reconnectMaxMs"] = _cfg->mqtt.reconnectMaxMs;
+    mqtt["offlineBufferPerSensor"] = _cfg->mqtt.offlineBufferPerSensor;
+    mqtt["offlinePersistSdEnabled"] = _cfg->mqtt.offlinePersistSdEnabled;
+    mqtt["offlinePersistPath"] = _cfg->mqtt.offlinePersistPath;
+    mqtt["offlinePersistMaxLines"] = _cfg->mqtt.offlinePersistMaxLines;
+    mqtt["publishHealth"] = _cfg->mqtt.publishHealth;
+    mqtt["healthIntervalMs"] = _cfg->mqtt.healthIntervalMs;
+    sendJson(req, doc);
+  });
+
+  _srv->on("/api/v1/config/mqtt", HTTP_PUT, [this, applyConfigPatch](AsyncWebServerRequest* req) {
+    if (!tokenAuthStrict(req)) return;
+
+    JsonDocument body;
+    String parseErr;
+    if (!parseJsonBody(req, body, parseErr)) {
+      JsonDocument errDoc;
+      errDoc["error"] = parseErr;
+      sendJson(req, errDoc, 400);
+      return;
+    }
+
+    const bool dryRun = body["dryRun"] | false;
+    const bool restartRequested = body["restart"] | false;
+
+    JsonDocument patchDoc;
+    JsonObject mqttPatch = patchDoc["mqtt"].to<JsonObject>();
+
+    auto copyIntoMqttPatch = [&mqttPatch](JsonObjectConst src, bool skipControlFields) {
+      for (JsonPairConst kv : src) {
+        const String key = kv.key().c_str();
+        if (skipControlFields && (key == "dryRun" || key == "restart" || key == "config")) continue;
+        mqttPatch[key] = kv.value();
+      }
+    };
+
+    if (body["config"]["mqtt"].is<JsonObjectConst>()) {
+      copyIntoMqttPatch(body["config"]["mqtt"].as<JsonObjectConst>(), false);
+    } else if (body["mqtt"].is<JsonObjectConst>()) {
+      copyIntoMqttPatch(body["mqtt"].as<JsonObjectConst>(), false);
+    } else if (body.is<JsonObjectConst>()) {
+      copyIntoMqttPatch(body.as<JsonObjectConst>(), true);
+    }
+
+    if (mqttPatch.size() == 0) {
+      return sendError(req, 400, "missing mqtt patch object (use root object, mqtt, or config.mqtt)");
+    }
+    applyConfigPatch(req, patchDoc.as<JsonVariantConst>(), dryRun, restartRequested);
   });
 
   _srv->on("/api/v1/system", HTTP_GET, [this](AsyncWebServerRequest* req) {

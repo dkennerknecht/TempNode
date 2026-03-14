@@ -361,6 +361,74 @@
         }
       }
     },
+    "/api/v1/config/mqtt": {
+      "get": {
+        "tags": ["config"],
+        "operationId": "getMqttConfig",
+        "summary": "Get redacted MQTT config",
+        "description": "Returns the active MQTT config section with redacted password. This endpoint always requires Bearer token auth and token mode.",
+        "security": [
+          {"bearerAuth": []}
+        ],
+        "responses": {
+          "200": {
+            "description": "MQTT config (redacted)",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/MqttConfigRedacted"}
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Token mode required"
+          }
+        }
+      },
+      "put": {
+        "tags": ["config"],
+        "operationId": "putMqttConfig",
+        "summary": "Patch MQTT config only",
+        "description": "Safely updates only the mqtt config section, validates, persists to LittleFS, mirrors to SD when /config.json exists, and can reboot when requested and required.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/MqttConfigPatchRequest"}
+            }
+          }
+        },
+        "security": [
+          {"bearerAuth": []}
+        ],
+        "responses": {
+          "200": {
+            "description": "MQTT config update accepted",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ConfigUpdateResponse"}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid patch or validation/persistence failed",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ConfigUpdateResponse"}
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Token mode required"
+          }
+        }
+      }
+    },
     "/api/v1/system": {
       "get": {
         "tags": ["system"],
@@ -876,6 +944,83 @@
           "reboot": {"type": "boolean"},
           "message": {"type": "string"}
         }
+      },
+      "MqttConfigRedacted": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "host",
+          "port",
+          "tls",
+          "user",
+          "pass",
+          "passSet",
+          "clientId",
+          "deviceId",
+          "baseTopic",
+          "reconnectMinMs",
+          "reconnectMaxMs",
+          "offlineBufferPerSensor",
+          "offlinePersistSdEnabled",
+          "offlinePersistPath",
+          "offlinePersistMaxLines",
+          "publishHealth",
+          "healthIntervalMs"
+        ],
+        "properties": {
+          "enabled": {"type": "boolean"},
+          "host": {"type": "string"},
+          "port": {"type": "integer"},
+          "tls": {"type": "boolean"},
+          "user": {"type": "string"},
+          "pass": {"type": "string"},
+          "passSet": {"type": "boolean"},
+          "clientId": {"type": "string"},
+          "deviceId": {"type": "string"},
+          "baseTopic": {"type": "string"},
+          "reconnectMinMs": {"type": "integer"},
+          "reconnectMaxMs": {"type": "integer"},
+          "offlineBufferPerSensor": {"type": "integer"},
+          "offlinePersistSdEnabled": {"type": "boolean"},
+          "offlinePersistPath": {"type": "string"},
+          "offlinePersistMaxLines": {"type": "integer"},
+          "publishHealth": {"type": "boolean"},
+          "healthIntervalMs": {"type": "integer"}
+        }
+      },
+      "MqttConfigPatch": {
+        "type": "object",
+        "description": "Partial MQTT config patch.",
+        "properties": {
+          "enabled": {"type": "boolean"},
+          "host": {"type": "string"},
+          "port": {"type": "integer", "minimum": 1},
+          "tls": {"type": "boolean"},
+          "user": {"type": "string"},
+          "pass": {"type": "string"},
+          "clientId": {"type": "string"},
+          "deviceId": {"type": "string"},
+          "baseTopic": {"type": "string"},
+          "reconnectMinMs": {"type": "integer"},
+          "reconnectMaxMs": {"type": "integer"},
+          "offlineBufferPerSensor": {"type": "integer"},
+          "offlinePersistSdEnabled": {"type": "boolean"},
+          "offlinePersistPath": {"type": "string"},
+          "offlinePersistMaxLines": {"type": "integer"},
+          "publishHealth": {"type": "boolean"},
+          "healthIntervalMs": {"type": "integer"}
+        },
+        "additionalProperties": true
+      },
+      "MqttConfigPatchRequest": {
+        "type": "object",
+        "description": "Send either mqtt fields directly at root, or in {\"mqtt\": {...}}.",
+        "properties": {
+          "dryRun": {"type": "boolean", "default": false},
+          "restart": {"type": "boolean", "default": false},
+          "mqtt": {"$ref": "#/components/schemas/MqttConfigPatch"}
+        },
+        "additionalProperties": true
       },
       "SystemResponse": {
         "type": "object",
