@@ -15,10 +15,8 @@
   },
   "mqtt": {
     "enabled": true,
-    "host": "192.168.10.202",
+    "host": "192.168.10.117",
     "port": 1883,
-    "user": "loxberry",
-    "pass": "loxberrymqtt",
     "baseTopic": "device",
     "offlineBufferPerSensor": 20,
     "offlinePersistSdEnabled": true,
@@ -61,8 +59,6 @@
   "security": {
     "enabled": true,
     "restAuthMode": "anonymous",
-    "allowAnonymousGet": true,
-    "restAuthMode": "token",
-    "restToken": "0U96ZKLNJzhLGrN9doxecGWiZYCRrlJa"
+    "allowAnonymousGet": true
   }
 }

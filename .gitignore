@@ -3,3 +3,4 @@
 site
 config.json
 !data/config.json
+data/config.json.bak

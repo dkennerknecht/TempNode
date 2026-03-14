@@ -168,6 +168,71 @@
         }
       }
     },
+    "/api/v1/temp/float": {
+      "get": {
+        "tags": ["sensors"],
+        "operationId": "getTempBySensorFloat",
+        "summary": "Latest temperature value for one sensor (plain float)",
+        "parameters": [
+          {
+            "name": "sensorId",
+            "in": "query",
+            "required": true,
+            "schema": {"type": "string"},
+            "description": "1-Wire sensor ID (ROM hex)."
+          }
+        ],
+        "security": [
+          {"bearerAuth": []},
+          {"basicAuth": []}
+        ],
+        "responses": {
+          "200": {
+            "description": "Plain float value as text/plain",
+            "content": {
+              "text/plain": {
+                "schema": {"type": "number"}
+              }
+            }
+          },
+          "503": {
+            "description": "Current sensor value is not a number",
+            "content": {
+              "text/plain": {
+                "schema": {"type": "string", "example": "nan"}
+              }
+            }
+          },
+          "400": {
+            "description": "Missing sensorId parameter",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ErrorResponse"}
+              }
+            }
+          },
+          "404": {
+            "description": "Sensor not found",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ErrorResponse"}
+              }
+            }
+          },
+          "500": {
+            "description": "Sensors unavailable",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ErrorResponse"}
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
     "/api/v1/sensors": {
       "get": {
         "tags": ["sensors"],

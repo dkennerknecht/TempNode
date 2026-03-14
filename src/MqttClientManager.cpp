@@ -89,6 +89,38 @@ static bool serializeBufferedMsgLine(const BufferedMsg& msg, String& out) {
   return true;
 }
 
+static bool isMqttIdAllowedChar(char c) {
+  return (c >= 'a' && c <= 'z') ||
+         (c >= 'A' && c <= 'Z') ||
+         (c >= '0' && c <= '9') ||
+         c == '_' || c == '-';
+}
+
+static String sanitizeMqttDeviceId(const String& in) {
+  String s = in;
+  s.trim();
+
+  String out;
+  out.reserve(s.length());
+  bool lastUnderscore = false;
+  for (size_t i = 0; i < s.length(); i++) {
+    char c = s[i];
+    if (isMqttIdAllowedChar(c)) {
+      out += c;
+      lastUnderscore = false;
+    } else {
+      if (!lastUnderscore) {
+        out += '_';
+        lastUnderscore = true;
+      }
+    }
+  }
+
+  while (out.length() && out[0] == '_') out.remove(0, 1);
+  while (out.length() && out[out.length() - 1] == '_') out.remove(out.length() - 1, 1);
+  return out;
+}
+
 void MqttClientManager::begin(const AppConfig& cfg, AppNetworkManager& net, LogManager& log, StatsManager& stats, TimeManager& tm) {
   _cfg = &cfg;
   _net = &net;
@@ -103,19 +135,34 @@ void MqttClientManager::begin(const AppConfig& cfg, AppNetworkManager& net, LogM
   _sdQueueDropped = 0;
   _nextSdQueueFlushMs = millis();
 
-  _deviceId = cfg.mqtt.deviceId.length() ? cfg.mqtt.deviceId : String("esp32s3-") + _net->macStr();
   _base = cfg.mqtt.baseTopic;
 
   // Keep all strings alive (AsyncMqttClient may keep pointers)
   _tls = cfg.mqtt.tls;
   _host = cfg.mqtt.host;
   _port = cfg.mqtt.port;
+  String macNoSep = _net->macStr();
+  macNoSep.replace(":", "");
+
   if (cfg.mqtt.clientId.length()) {
     _clientId = cfg.mqtt.clientId;
   } else {
-    String macNoSep = _net->macStr();
-    macNoSep.replace(":", "");
     _clientId = String("esp32s3-") + macNoSep;
+  }
+
+  String generatedDeviceId = String("esp32s3_");
+  String shortMac = macNoSep;
+  // Keep only the last 3 MAC bytes (6 hex chars) for shorter topics.
+  if (shortMac.length() > 6) shortMac = shortMac.substring(shortMac.length() - 6);
+  generatedDeviceId += shortMac;
+
+  String rawDeviceId = cfg.mqtt.deviceId.length() ? cfg.mqtt.deviceId : generatedDeviceId;
+  _deviceId = sanitizeMqttDeviceId(rawDeviceId);
+  if (!_deviceId.length()) {
+    _deviceId = generatedDeviceId;
+  }
+  if (_deviceId != rawDeviceId) {
+    _log->warn(String("MQTT deviceId sanitized: '") + rawDeviceId + "' -> '" + _deviceId + "'");
   }
 
   if (cfg.mqtt.user.length() || cfg.mqtt.pass.length()) {

@@ -170,6 +170,7 @@ Optional behavior in token mode:
 | GET | `/health` | Detailed status with subsystem checks |
 | GET | `/temps` | Latest reading for all discovered sensors |
 | GET | `/temp?sensorId=<id>` | Latest reading for one specific sensor |
+| GET | `/temp/float?sensorId=<id>` | Latest reading for one sensor as plain float (`text/plain`) |
 | GET | `/sensors` | Sensor summary and interval |
 | GET/POST/PUT | `/sensors/interval` | Read/set sensor interval (persisted to LittleFS, mirrored to SD when `/config.json` exists) |
 | GET | `/system` | Runtime diagnostics |
@@ -212,6 +213,8 @@ Auth behavior:
 - If `mqtt.user` and `mqtt.pass` are set: username/password login
 - If both are empty: anonymous login
 - Legacy fallback from `security.mqttUser` / `security.mqttPass` is still supported
+- `deviceId` used in MQTT topics is sanitized at runtime (no spaces/`:`; invalid chars become `_`)
+- If `mqtt.deviceId` is empty, a short default like `esp32s3_003CFD` is generated
 
 Health metrics publishing:
 
