@@ -65,7 +65,7 @@ void RestServer::resetOtaState() {
 
 bool RestServer::otaPrecheck(AsyncWebServerRequest* req, const String& filename, OtaTarget target) {
   if (!_cfg->security.enabled || !_cfg->security.restToken.length()) {
-    _otaRejectReason = "OTA requires security.enabled=true and restToken";
+    _otaRejectReason = "OTA requires security.restAuthMode=token and restToken";
     return false;
   }
   if (!req->hasHeader("Authorization")) {
@@ -271,7 +271,8 @@ bool RestServer::otaCheckVersionChunk(const uint8_t* data, size_t len) {
 }
 
 bool RestServer::authOk(AsyncWebServerRequest* req) const {
-  if (!_cfg->security.enabled) return true;
+  if (_cfg->security.restAuthMode != "token") return true;
+  if (_cfg->security.allowAnonymousGet && req->method() == HTTP_GET) return true;
 
   // Token (Authorization: Bearer <token>)
   if (_cfg->security.restToken.length()) {
@@ -285,11 +286,7 @@ bool RestServer::authOk(AsyncWebServerRequest* req) const {
     }
   }
 
-  // Basic auth
-  if (_cfg->security.restUser.length() && _cfg->security.restPass.length()) {
-    if (req->authenticate(_cfg->security.restUser.c_str(), _cfg->security.restPass.c_str())) return true;
-  }
-  req->requestAuthentication();
+  req->send(401, "application/json", "{\"error\":\"authentication required\"}");
   return false;
 }
 
@@ -663,7 +660,7 @@ void RestServer::setupRoutes() {
   // OTA (HTTP upload) - optional
   if (_cfg->ota.enabled) {
     if (!_cfg->security.enabled || !_cfg->security.restToken.length()) {
-      _log->error("OTA endpoint disabled: requires security.enabled=true and security.restToken");
+      _log->error("OTA endpoint disabled: requires security.restAuthMode=token and security.restToken");
     } else if (!_cfg->ota.allowInsecureHttp) {
       _log->warn("OTA endpoint disabled: plain HTTP blocked (set ota.allowInsecureHttp=true to allow)");
     } else {

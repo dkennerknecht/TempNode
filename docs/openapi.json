@@ -3,7 +3,7 @@
   "info": {
     "title": "TempNode REST API",
     "version": "1.0.0",
-    "description": "REST API for TempNode on ESP32-S3-ETH. Authentication is required when security.enabled=true (Bearer token or Basic auth).",
+    "description": "REST API for TempNode on ESP32-S3-ETH. Runtime auth behavior is controlled by security.restAuthMode (anonymous|token) and security.allowAnonymousGet.",
     "license": {
       "name": "UNLICENSED",
       "identifier": "UNLICENSED"

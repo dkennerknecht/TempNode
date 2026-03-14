@@ -128,7 +128,7 @@ Main config blocks:
 - `logging`: separate `consoleLevel` and `sdLevel`, rotation, retention
 - `metrics`: enable `/api/v1/metrics`
 - `watchdog`: task watchdog behavior
-- `security`: REST token/basic auth
+- `security`: REST auth mode + token policy
 - `ota`: OTA gating and validation
 
 Reference file:
@@ -141,7 +141,16 @@ Base URL:
 
 - `http://<NODE_IP>/api/v1`
 
-When `security.enabled=true`, endpoints require auth (Bearer token or Basic auth).
+REST auth is controlled by `security.restAuthMode`:
+
+- `anonymous`: no auth required
+- `token`: Bearer token required
+
+Optional behavior in token mode:
+
+- `security.allowAnonymousGet=true` allows unauthenticated `GET` requests
+- non-GET requests still require `Authorization: Bearer <token>`
+- legacy `security.enabled` is still accepted; `restAuthMode` is preferred
 
 ### Key Endpoints
 
@@ -205,7 +214,7 @@ OTA endpoint is active only when all conditions are met:
 
 - `ota.enabled=true`
 - `ota.allowInsecureHttp=true`
-- `security.enabled=true`
+- `security.restAuthMode="token"`
 - `security.restToken` is set
 
 Available endpoints:

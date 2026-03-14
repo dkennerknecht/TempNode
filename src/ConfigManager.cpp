@@ -95,6 +95,8 @@ static void configToJson(const AppConfig& cfg, JsonDocument& doc) {
   doc["watchdog"]["panicReset"] = cfg.watchdog.panicReset;
 
   doc["security"]["enabled"] = cfg.security.enabled;
+  doc["security"]["restAuthMode"] = cfg.security.restAuthMode;
+  doc["security"]["allowAnonymousGet"] = cfg.security.allowAnonymousGet;
   doc["security"]["restUser"] = cfg.security.restUser;
   doc["security"]["restPass"] = cfg.security.restPass;
   doc["security"]["restToken"] = cfg.security.restToken;
@@ -120,6 +122,8 @@ void ConfigManager::begin(LogManager& log) {
 
 void ConfigManager::applyDefaults() {
   _cfg = AppConfig{};
+  _cfg.security.restAuthMode = "anonymous";
+  _cfg.security.allowAnonymousGet = false;
   _cfg.mqtt.publishHealth = true;
   _cfg.mqtt.healthIntervalMs = 15000;
   syncFeatureFlags();
@@ -213,6 +217,8 @@ bool ConfigManager::parseJson(const String& json) {
   _cfg.watchdog.panicReset = doc["watchdog"]["panicReset"] | _cfg.watchdog.panicReset;
 
   // Security
+  _cfg.security.restAuthMode = String((const char*)(doc["security"]["restAuthMode"] | _cfg.security.restAuthMode.c_str()));
+  _cfg.security.allowAnonymousGet = doc["security"]["allowAnonymousGet"] | _cfg.security.allowAnonymousGet;
   _cfg.security.restUser = String((const char*)(doc["security"]["restUser"] | _cfg.security.restUser.c_str()));
   _cfg.security.restPass = String((const char*)(doc["security"]["restPass"] | _cfg.security.restPass.c_str()));
   _cfg.security.restToken = String((const char*)(doc["security"]["restToken"] | _cfg.security.restToken.c_str()));
@@ -316,24 +322,29 @@ bool ConfigManager::validate() {
     _log->warn("config: logging.retentionDays requires logging.rotateDaily=true; retention will be inactive");
   }
 
+  String restMode = _cfg.security.restAuthMode;
+  restMode.trim();
+  restMode.toLowerCase();
+  if (!restMode.length()) {
+    restMode = _cfg.security.enabled ? "token" : "anonymous";
+  }
+  if (restMode != "anonymous" && restMode != "token") {
+    _log->error("config: security.restAuthMode invalid (allowed: anonymous|token)");
+    ok = false;
+  }
+  _cfg.security.restAuthMode = restMode;
+  _cfg.security.enabled = (restMode == "token");
+
   if (_cfg.security.enabled) {
-    const bool basicConfigured = _cfg.security.restUser.length() > 0 && _cfg.security.restPass.length() > 0;
-    const bool tokenConfigured = _cfg.security.restToken.length() > 0;
-
-    if (!basicConfigured && !tokenConfigured) {
-      _log->error("config: security enabled, but no REST auth configured (set restToken or restUser/restPass)");
-      ok = false;
-    }
-
-    if (basicConfigured && _cfg.security.restUser == "admin" && _cfg.security.restPass == "admin") {
-      _log->error("config: weak REST credentials admin/admin are not allowed when security is enabled");
+    if (!_cfg.security.restToken.length()) {
+      _log->error("config: restAuthMode=token requires security.restToken");
       ok = false;
     }
   }
 
   if (_cfg.ota.enabled) {
     if (!_cfg.security.enabled || !_cfg.security.restToken.length()) {
-      _log->warn("config: OTA enabled but security token missing. OTA endpoint will stay disabled.");
+      _log->warn("config: OTA enabled but token auth is not active. Set security.restAuthMode=token and security.restToken.");
     }
     if (!_cfg.ota.allowInsecureHttp) {
       _log->warn("config: OTA insecure HTTP not allowed. Set ota.allowInsecureHttp=true to enable OTA endpoint.");

@@ -3,13 +3,17 @@
 
 struct SecurityConfig {
   bool enabled;
-  // REST basic auth
+  // REST auth mode: "anonymous" or "token"
+  String restAuthMode;
+  // If true and mode is token, allow unauthenticated GET requests.
+  bool allowAnonymousGet;
+  // Legacy REST basic auth fields (kept for backward compatibility)
   String restUser;
   String restPass;
   // MQTT auth
   String mqttUser;
   String mqttPass;
-  // Optional bearer token for REST (if set and security.enabled)
+  // Bearer token for REST when restAuthMode is "token"
   String restToken;
 };
 

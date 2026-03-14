@@ -56,8 +56,8 @@
   },
   "security": {
     "enabled": false,
-    "restUser": "api",
-    "restPass": "CHANGE_ME_STRONG_PASSWORD",
+    "restAuthMode": "anonymous",
+    "allowAnonymousGet": true,
     "restToken": ""
   }
 }
