@@ -113,7 +113,7 @@ pio run
 ### 3. Flash
 
 ```bash
-pio run -t upload
+pio run -t upload -t uploadfs
 ```
 
 ### 4. Serial Monitor
@@ -122,16 +122,19 @@ pio run -t upload
 pio device monitor
 ```
 
-### 5. Optional SD Configuration
+### 5. Configuration File
 
+- Project config for `uploadfs` lives at [`data/config.json`](data/config.json).
 - Use [`config.example.json`](config.example.json) as template.
-- Save it as `/config.json` on SD card root.
+- Optional runtime override: place `/config.json` on SD card root.
 
 ## Configuration (`/config.json`)
 
-- Code defaults are always present.
-- `/config.json` is optional.
-- If the file exists but is unreadable or invalid JSON, the firmware intentionally halts (fail-fast).
+- A valid `/config.json` is required (fail-fast if missing).
+- Load order:
+  1. LittleFS `/config.json` (from `pio run -t uploadfs`)
+  2. SD `/config.json` (if present, overrides LittleFS values)
+- If a config exists but is unreadable or invalid JSON, the firmware intentionally halts (fail-fast).
 
 ### Main Sections
 
@@ -376,7 +379,7 @@ Check all OTA prerequisites:
 
 ```bash
 pio run
-pio run -t upload
+pio run -t upload -t uploadfs
 pio device monitor
 ```
 

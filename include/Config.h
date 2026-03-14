@@ -2,85 +2,85 @@
 #include <Arduino.h>
 
 struct SecurityConfig {
-  bool enabled = false;
+  bool enabled;
   // REST basic auth
-  String restUser = "";
-  String restPass = "";
+  String restUser;
+  String restPass;
   // MQTT auth
-  String mqttUser = "";
-  String mqttPass = "";
+  String mqttUser;
+  String mqttPass;
   // Optional bearer token for REST (if set and security.enabled)
-  String restToken = "";
+  String restToken;
 };
 
 struct RestConfig {
-  bool enabled = true;
-  uint16_t port = 80;
+  bool enabled;
+  uint16_t port;
 };
 
 struct MqttConfig {
-  bool enabled = true;
-  String host = "192.168.1.117";
-  uint16_t port = 1883;
-  bool tls = false;
-  String user = "";
-  String pass = "";
-  String clientId = "";
-  String deviceId = "";
-  String baseTopic = "device";
-  uint32_t reconnectMinMs = 1000;
-  uint32_t reconnectMaxMs = 60000;
-  uint16_t offlineBufferPerSensor = 20; // ringbuffer size per sensor
+  bool enabled;
+  String host;
+  uint16_t port;
+  bool tls;
+  String user;
+  String pass;
+  String clientId;
+  String deviceId;
+  String baseTopic;
+  uint32_t reconnectMinMs;
+  uint32_t reconnectMaxMs;
+  uint16_t offlineBufferPerSensor; // ringbuffer size per sensor
 };
 
 struct OtaConfig {
-  bool enabled = false;
-  bool allowInsecureHttp = false;   // explicit opt-in: REST server is plain HTTP
-  bool allowDowngrade = false;      // reject same/older app version by default
-  bool requireHashHeader = true;    // require X-OTA-SHA256 or X-OTA-MD5
-  uint32_t healthConfirmMs = 30000; // confirm new image after stable runtime
-  bool requireNetworkForConfirm = true;
+  bool enabled;
+  bool allowInsecureHttp;   // explicit opt-in: REST server is plain HTTP
+  bool allowDowngrade;      // reject same/older app version by default
+  bool requireHashHeader;    // require X-OTA-SHA256 or X-OTA-MD5
+  uint32_t healthConfirmMs; // confirm new image after stable runtime
+  bool requireNetworkForConfirm;
 };
 
 struct MetricsConfig {
-  bool enabled = true;
+  bool enabled;
 };
 
 struct HistoryConfig {
-  bool enabled = true;
-  String path = "/history.jsonl";
-  uint32_t flushIntervalMs = 1000;
-  uint32_t retentionDays = 0; // 0 = no retention
+  bool enabled;
+  String path;
+  uint32_t flushIntervalMs;
+  uint32_t retentionDays; // 0 = no retention
 };
 
 struct LoggingConfig {
-  String consoleLevel = "INFO";
-  String sdLevel = "INFO";
-  bool sdEnabled = true;
-  bool rotateDaily = true;
-  uint16_t retentionDays = 0; // 0 = no retention
+  String consoleLevel;
+  String sdLevel;
+  bool sdEnabled;
+  bool rotateDaily;
+  uint16_t retentionDays; // 0 = no retention
 };
 
 struct SensorConfig {
-  uint32_t intervalMs = 5000;
-  uint16_t resolutionBits = 12; // 9..12
-  uint32_t conversionTimeoutMs = 1000; // max wait for DS18B20 conversion
+  uint32_t intervalMs;
+  uint16_t resolutionBits; // 9..12
+  uint32_t conversionTimeoutMs; // max wait for DS18B20 conversion
 };
 
 struct WatchdogConfig {
-  bool enabled = false;
-  uint32_t timeoutMs = 15000;
-  bool panicReset = true;
+  bool enabled;
+  uint32_t timeoutMs;
+  bool panicReset;
 };
 
 struct NetworkConfig {
-  String hostname = "esp32-s3-eth";
-  bool dhcp = true;
+  String hostname;
+  bool dhcp;
   // Static (only if dhcp=false)
-  String ip = "192.168.1.50";
-  String gw = "192.168.1.1";
-  String mask = "255.255.255.0";
-  String dns = "192.168.1.1";
+  String ip;
+  String gw;
+  String mask;
+  String dns;
 };
 
 struct AppConfig {
@@ -96,10 +96,10 @@ struct AppConfig {
   WatchdogConfig watchdog;
 
   // Feature flags (redundant but explicit)
-  bool restEnabled = true;
-  bool mqttEnabled = true;
-  bool securityEnabled = false;
-  bool otaEnabled = false;
-  bool metricsEnabled = true;
-  bool historyEnabled = true;
+  bool restEnabled;
+  bool mqttEnabled;
+  bool securityEnabled;
+  bool otaEnabled;
+  bool metricsEnabled;
+  bool historyEnabled;
 };

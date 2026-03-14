@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <SD.h>
+#include <LittleFS.h>
 
 #if __has_include(<esp32-hal-rgb-led.h>)
   #include <esp32-hal-rgb-led.h> // rgbLedWrite
@@ -93,6 +94,14 @@ void setup() {
   g_log.info("booting...");
   g_log.info(String("reset reason: ") + resetReason);
 
+  // LittleFS (project config via uploadfs)
+  bool littleFsOk = LittleFS.begin(false);
+  if (!littleFsOk) {
+    g_log.warn("LittleFS mount failed/unavailable");
+  } else {
+    g_log.info("LittleFS mounted");
+  }
+
   // SD
   Serial.println("mounting SD (single attempt)...");
   bool sdOk = g_sd.mountWithTimeout(0, 20000000);
@@ -112,14 +121,9 @@ void setup() {
 
   // Config
   g_cfg.begin(g_log);
-  if (sdOk) {
-    if (!g_cfg.loadFromSd()) {
-      // fail-fast if config exists but can't be loaded
-      if (SD.exists("/config.json")) {
-        g_log.error("FAIL-FAST: config.json present but unreadable. Halting.");
-        for(;;) { g_wdt.feed(); delay(0); }
-      }
-    }
+  if (!g_cfg.loadFromSources(sdOk, littleFsOk)) {
+    g_log.error("FAIL-FAST: unable to load valid config from LittleFS/SD. Halting.");
+    for(;;) { g_wdt.feed(); delay(0); }
   }
 
   const AppConfig& cfg = g_cfg.get();

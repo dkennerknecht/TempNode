@@ -1,12 +1,15 @@
 #include "ConfigManager.h"
 #include "LogManager.h"
 #include <ArduinoJson.h>
+#include <FS.h>
+#include <LittleFS.h>
 #include <SD.h>
 #include <WiFi.h>
 
-static bool readFileToString(const char* path, String& out) {
-  File f = SD.open(path, FILE_READ);
+static bool readFileToString(fs::FS& fs, const char* path, String& out) {
+  File f = fs.open(path, FILE_READ);
   if (!f) return false;
+  out = "";
   out.reserve((size_t)f.size() + 1);
   while (f.available()) out += (char)f.read();
   f.close();
@@ -126,13 +129,16 @@ bool ConfigManager::parseJson(const String& json) {
   _cfg.security.mqttUser = String((const char*)(doc["security"]["mqttUser"] | _cfg.security.mqttUser.c_str()));
   _cfg.security.mqttPass = String((const char*)(doc["security"]["mqttPass"] | _cfg.security.mqttPass.c_str()));
 
-  bool valid = validate();
-  syncFeatureFlags();
-  return valid;
+  return true;
 }
 
 bool ConfigManager::validate() {
   bool ok = true;
+
+  if (!_cfg.network.hostname.length()) {
+    _log->error("config: network.hostname is required");
+    ok = false;
+  }
 
   if (_cfg.sensors.resolutionBits < 9 || _cfg.sensors.resolutionBits > 12) {
     _log->warn("config: sensors.resolutionBits out of range (9..12), forcing 12");
@@ -157,7 +163,25 @@ bool ConfigManager::validate() {
     _cfg.mqtt.enabled = false;
   }
 
-  if (_cfg.rest.port == 0) _cfg.rest.port = 80;
+  if (_cfg.rest.enabled && _cfg.rest.port == 0) {
+    _log->error("config: rest.port must be > 0 when rest.enabled=true");
+    ok = false;
+  }
+
+  if (_cfg.mqtt.enabled) {
+    if (!_cfg.mqtt.host.length()) {
+      _log->error("config: mqtt.host is required when mqtt.enabled=true");
+      ok = false;
+    }
+    if (_cfg.mqtt.port == 0) {
+      _log->error("config: mqtt.port must be > 0 when mqtt.enabled=true");
+      ok = false;
+    }
+    if (!_cfg.mqtt.baseTopic.length()) {
+      _log->error("config: mqtt.baseTopic is required when mqtt.enabled=true");
+      ok = false;
+    }
+  }
 
   if (_cfg.ota.healthConfirmMs < 5000) {
     _cfg.ota.healthConfirmMs = 5000;
@@ -174,13 +198,18 @@ bool ConfigManager::validate() {
   }
 
   if (!normalizeLogLevelName(_cfg.logging.consoleLevel)) {
-    _log->warn("config: logging.consoleLevel invalid, forcing INFO");
-    _cfg.logging.consoleLevel = "INFO";
+    _log->error("config: logging.consoleLevel invalid (allowed: DEBUG|INFO|WARN|ERROR)");
+    ok = false;
   }
 
   if (!normalizeLogLevelName(_cfg.logging.sdLevel)) {
-    _log->warn("config: logging.sdLevel invalid, forcing INFO");
-    _cfg.logging.sdLevel = "INFO";
+    _log->error("config: logging.sdLevel invalid (allowed: DEBUG|INFO|WARN|ERROR)");
+    ok = false;
+  }
+
+  if (_cfg.history.enabled && !_cfg.history.path.length()) {
+    _log->error("config: history.path is required when history.enabled=true");
+    ok = false;
   }
 
   if (_cfg.logging.retentionDays > 3650) {
@@ -222,16 +251,49 @@ bool ConfigManager::validate() {
   return ok;
 }
 
-bool ConfigManager::loadFromSd() {
-  if (!SD.exists("/config.json")) {
-    _log->info("config.json not found on SD, using defaults");
-    return true;
+bool ConfigManager::loadFromSources(bool sdAvailable, bool littleFsAvailable) {
+  applyDefaults();
+
+  bool loadedAny = false;
+
+  if (littleFsAvailable) {
+    if (LittleFS.exists("/config.json")) {
+      String json;
+      if (!readFileToString(LittleFS, "/config.json", json)) {
+        _log->error("failed to read /config.json from LittleFS");
+        return false;
+      }
+      _log->info("loading /config.json from LittleFS");
+      if (!parseJson(json)) return false;
+      loadedAny = true;
+    } else {
+      _log->warn("config: /config.json not found on LittleFS");
+    }
+  } else {
+    _log->warn("config: LittleFS unavailable");
   }
-  String json;
-  if (!readFileToString("/config.json", json)) {
-    _log->error("failed to read /config.json");
+
+  if (sdAvailable) {
+    if (SD.exists("/config.json")) {
+      String json;
+      if (!readFileToString(SD, "/config.json", json)) {
+        _log->error("failed to read /config.json from SD");
+        return false;
+      }
+      _log->info("loading /config.json from SD (overrides LittleFS)");
+      if (!parseJson(json)) return false;
+      loadedAny = true;
+    } else {
+      _log->info("config: /config.json not found on SD");
+    }
+  }
+
+  if (!loadedAny) {
+    _log->error("FAIL-FAST: no /config.json found on LittleFS or SD.");
     return false;
   }
-  _log->info("loading /config.json");
-  return parseJson(json);
+
+  const bool valid = validate();
+  syncFeatureFlags();
+  return valid;
 }

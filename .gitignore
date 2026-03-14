@@ -1,2 +1,4 @@
 .pio
 .idea
+config.json
+!data/config.json

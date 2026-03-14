@@ -60,7 +60,7 @@ void MqttClientManager::begin(const AppConfig& cfg, AppNetworkManager& net, LogM
   _tm = &tm;
 
   _deviceId = cfg.mqtt.deviceId.length() ? cfg.mqtt.deviceId : String("esp32s3-") + _net->macStr();
-  _base = cfg.mqtt.baseTopic.length() ? cfg.mqtt.baseTopic : "device";
+  _base = cfg.mqtt.baseTopic;
 
   // Keep all strings alive (AsyncMqttClient may keep pointers)
   _tls = cfg.mqtt.tls;

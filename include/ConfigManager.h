@@ -9,8 +9,10 @@ public:
   void begin(LogManager& log);
   const AppConfig& get() const { return _cfg; }
 
-  // Load optional /config.json from SD if available
-  bool loadFromSd();
+  // Load /config.json from available storage:
+  // - LittleFS (/config.json), then
+  // - SD (/config.json) as override if present
+  bool loadFromSources(bool sdAvailable, bool littleFsAvailable);
 
   String deviceId() const;
 
