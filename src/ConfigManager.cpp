@@ -1,5 +1,6 @@
 #include "ConfigManager.h"
 #include "LogManager.h"
+#include "SharedSdMutex.h"
 #include <ArduinoJson.h>
 #include <FS.h>
 #include <LittleFS.h>
@@ -14,6 +15,91 @@ static bool readFileToString(fs::FS& fs, const char* path, String& out) {
   while (f.available()) out += (char)f.read();
   f.close();
   return true;
+}
+
+static bool writeStringAtomic(fs::FS& fs, const char* path, const String& content) {
+  const String tmp = String(path) + ".tmp";
+  fs.remove(tmp);
+
+  File f = fs.open(tmp, FILE_WRITE);
+  if (!f) return false;
+
+  const size_t written = f.print(content);
+  f.flush();
+  f.close();
+  if (written != content.length()) {
+    fs.remove(tmp);
+    return false;
+  }
+
+  fs.remove(path);
+  if (!fs.rename(tmp, path)) {
+    fs.remove(tmp);
+    return false;
+  }
+  return true;
+}
+
+static void configToJson(const AppConfig& cfg, JsonDocument& doc) {
+  doc["network"]["hostname"] = cfg.network.hostname;
+  doc["network"]["dhcp"] = cfg.network.dhcp;
+  doc["network"]["ip"] = cfg.network.ip;
+  doc["network"]["gw"] = cfg.network.gw;
+  doc["network"]["mask"] = cfg.network.mask;
+  doc["network"]["dns"] = cfg.network.dns;
+
+  doc["sensors"]["intervalMs"] = cfg.sensors.intervalMs;
+  doc["sensors"]["resolutionBits"] = cfg.sensors.resolutionBits;
+  doc["sensors"]["conversionTimeoutMs"] = cfg.sensors.conversionTimeoutMs;
+
+  doc["rest"]["enabled"] = cfg.rest.enabled;
+  doc["rest"]["port"] = cfg.rest.port;
+
+  doc["mqtt"]["enabled"] = cfg.mqtt.enabled;
+  doc["mqtt"]["host"] = cfg.mqtt.host;
+  doc["mqtt"]["port"] = cfg.mqtt.port;
+  doc["mqtt"]["tls"] = cfg.mqtt.tls;
+  doc["mqtt"]["user"] = cfg.mqtt.user;
+  doc["mqtt"]["pass"] = cfg.mqtt.pass;
+  doc["mqtt"]["clientId"] = cfg.mqtt.clientId;
+  doc["mqtt"]["deviceId"] = cfg.mqtt.deviceId;
+  doc["mqtt"]["baseTopic"] = cfg.mqtt.baseTopic;
+  doc["mqtt"]["offlineBufferPerSensor"] = cfg.mqtt.offlineBufferPerSensor;
+  doc["mqtt"]["publishHealth"] = cfg.mqtt.publishHealth;
+  doc["mqtt"]["healthIntervalMs"] = cfg.mqtt.healthIntervalMs;
+  doc["mqtt"]["reconnectMinMs"] = cfg.mqtt.reconnectMinMs;
+  doc["mqtt"]["reconnectMaxMs"] = cfg.mqtt.reconnectMaxMs;
+
+  doc["history"]["enabled"] = cfg.history.enabled;
+  doc["history"]["path"] = cfg.history.path;
+  doc["history"]["flushIntervalMs"] = cfg.history.flushIntervalMs;
+  doc["history"]["retentionDays"] = cfg.history.retentionDays;
+
+  doc["logging"]["consoleLevel"] = cfg.logging.consoleLevel;
+  doc["logging"]["sdLevel"] = cfg.logging.sdLevel;
+  doc["logging"]["sdEnabled"] = cfg.logging.sdEnabled;
+  doc["logging"]["rotateDaily"] = cfg.logging.rotateDaily;
+  doc["logging"]["retentionDays"] = cfg.logging.retentionDays;
+
+  doc["metrics"]["enabled"] = cfg.metrics.enabled;
+
+  doc["ota"]["enabled"] = cfg.ota.enabled;
+  doc["ota"]["allowInsecureHttp"] = cfg.ota.allowInsecureHttp;
+  doc["ota"]["allowDowngrade"] = cfg.ota.allowDowngrade;
+  doc["ota"]["requireHashHeader"] = cfg.ota.requireHashHeader;
+  doc["ota"]["healthConfirmMs"] = cfg.ota.healthConfirmMs;
+  doc["ota"]["requireNetworkForConfirm"] = cfg.ota.requireNetworkForConfirm;
+
+  doc["watchdog"]["enabled"] = cfg.watchdog.enabled;
+  doc["watchdog"]["timeoutMs"] = cfg.watchdog.timeoutMs;
+  doc["watchdog"]["panicReset"] = cfg.watchdog.panicReset;
+
+  doc["security"]["enabled"] = cfg.security.enabled;
+  doc["security"]["restUser"] = cfg.security.restUser;
+  doc["security"]["restPass"] = cfg.security.restPass;
+  doc["security"]["restToken"] = cfg.security.restToken;
+  doc["security"]["mqttUser"] = cfg.security.mqttUser;
+  doc["security"]["mqttPass"] = cfg.security.mqttPass;
 }
 
 static bool isValidLogLevelName(const String& level) {
@@ -257,6 +343,89 @@ bool ConfigManager::validate() {
     }
   }
 
+  return ok;
+}
+
+bool ConfigManager::persistCurrentConfig(bool sdAvailable,
+                                         bool* savedLittleFs,
+                                         bool* savedSd,
+                                         String* error) {
+  if (savedLittleFs) *savedLittleFs = false;
+  if (savedSd) *savedSd = false;
+  if (error) *error = "";
+
+  JsonDocument doc;
+  configToJson(_cfg, doc);
+  String out;
+  if (serializeJson(doc, out) == 0) {
+    if (error) *error = "failed to serialize config";
+    return false;
+  }
+
+  if (!LittleFS.begin(false)) {
+    if (error) *error = "LittleFS unavailable";
+    return false;
+  }
+  if (!writeStringAtomic(LittleFS, "/config.json", out)) {
+    if (error) *error = "failed to write /config.json to LittleFS";
+    return false;
+  }
+  if (savedLittleFs) *savedLittleFs = true;
+
+  if (!sdAvailable) return true;
+
+  SemaphoreHandle_t sdMutex = sharedSdMutex();
+  if (!sdMutex) {
+    if (error) *error = "SD mutex unavailable";
+    return false;
+  }
+  if (xSemaphoreTake(sdMutex, pdMS_TO_TICKS(250)) != pdTRUE) {
+    if (error) *error = "SD mutex timeout";
+    return false;
+  }
+
+  const bool hasSdConfig = SD.exists("/config.json");
+  if (!hasSdConfig) {
+    xSemaphoreGive(sdMutex);
+    return true;
+  }
+
+  const bool sdWriteOk = writeStringAtomic(SD, "/config.json", out);
+  xSemaphoreGive(sdMutex);
+
+  if (!sdWriteOk) {
+    if (error) *error = "saved to LittleFS, but failed to write /config.json to SD";
+    return false;
+  }
+
+  if (savedSd) *savedSd = true;
+  return true;
+}
+
+bool ConfigManager::updateSensorIntervalAndPersist(uint32_t requestedMs,
+                                                   bool sdAvailable,
+                                                   uint32_t* appliedMs,
+                                                   bool* savedLittleFs,
+                                                   bool* savedSd,
+                                                   String* error) {
+  uint32_t clamped = requestedMs;
+  if (clamped < 500) clamped = 500;
+  if (clamped > 3600000) clamped = 3600000;
+
+  const uint32_t previousMs = _cfg.sensors.intervalMs;
+  _cfg.sensors.intervalMs = clamped;
+
+  bool littleFsOk = false;
+  bool sdOk = false;
+  const bool ok = persistCurrentConfig(sdAvailable, &littleFsOk, &sdOk, error);
+
+  if (!ok && !littleFsOk) {
+    _cfg.sensors.intervalMs = previousMs;
+  }
+
+  if (appliedMs) *appliedMs = _cfg.sensors.intervalMs;
+  if (savedLittleFs) *savedLittleFs = littleFsOk;
+  if (savedSd) *savedSd = sdOk;
   return ok;
 }
 

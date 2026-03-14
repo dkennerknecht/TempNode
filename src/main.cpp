@@ -160,7 +160,7 @@ void setup() {
 
   // REST
   if (cfg.rest.enabled) {
-    g_rest.begin(cfg, g_log, g_time, g_net, g_sensors, g_history, g_stats, g_mqtt);
+    g_rest.begin(cfg, g_log, g_time, g_net, g_sensors, g_history, g_stats, g_mqtt, g_cfg);
   }
 
   // Save last boot epoch if time valid

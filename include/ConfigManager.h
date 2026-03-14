@@ -14,6 +14,16 @@ public:
   // - SD (/config.json) as override if present
   bool loadFromSources(bool sdAvailable, bool littleFsAvailable);
 
+  // Update sensors.intervalMs and persist config:
+  // - always write LittleFS /config.json
+  // - write SD /config.json only if SD is available and file exists
+  bool updateSensorIntervalAndPersist(uint32_t requestedMs,
+                                      bool sdAvailable,
+                                      uint32_t* appliedMs = nullptr,
+                                      bool* savedLittleFs = nullptr,
+                                      bool* savedSd = nullptr,
+                                      String* error = nullptr);
+
   String deviceId() const;
 
 private:
@@ -24,4 +34,8 @@ private:
   void syncFeatureFlags();
   bool parseJson(const String& json);
   bool validate();
+  bool persistCurrentConfig(bool sdAvailable,
+                            bool* savedLittleFs,
+                            bool* savedSd,
+                            String* error);
 };

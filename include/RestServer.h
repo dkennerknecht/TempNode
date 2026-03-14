@@ -11,6 +11,7 @@ class SensorManager;
 class HistoryManager;
 class StatsManager;
 class MqttClientManager;
+class ConfigManager;
 struct AppConfig;
 
 class RestServer {
@@ -22,9 +23,15 @@ public:
              SensorManager& sensors,
              HistoryManager& history,
              StatsManager& stats,
-             MqttClientManager& mqtt);
+             MqttClientManager& mqtt,
+             ConfigManager& cfgManager);
 
 private:
+  enum class OtaTarget : uint8_t {
+    Firmware,
+    Filesystem
+  };
+
   const AppConfig* _cfg = nullptr;
   LogManager* _log = nullptr;
   TimeManager* _tm = nullptr;
@@ -33,6 +40,7 @@ private:
   HistoryManager* _history = nullptr;
   StatsManager* _stats = nullptr;
   MqttClientManager* _mqtt = nullptr;
+  ConfigManager* _cfgManager = nullptr;
 
   AsyncWebServer* _srv = nullptr;
 
@@ -52,7 +60,8 @@ private:
 
   bool authOk(AsyncWebServerRequest* req) const;
   void resetOtaState();
-  bool otaPrecheck(AsyncWebServerRequest* req, const String& filename);
+  bool otaPrecheck(AsyncWebServerRequest* req, const String& filename, OtaTarget target);
+  bool otaFinalize(AsyncWebServerRequest* req, const char* uploadName);
   bool otaCheckVersionChunk(const uint8_t* data, size_t len);
   void setupRoutes();
 };

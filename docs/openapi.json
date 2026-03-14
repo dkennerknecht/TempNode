@@ -43,7 +43,7 @@
     },
     {
       "name": "ota",
-      "description": "Firmware upload endpoint for OTA updates."
+      "description": "Firmware and filesystem upload endpoints for OTA updates."
     }
   ],
   "paths": {
@@ -166,7 +166,7 @@
         "tags": ["sensors"],
         "operationId": "setSensorIntervalPost",
         "summary": "Set sensor interval",
-        "description": "Supports query parameter, form field, or JSON body with intervalMs.",
+        "description": "Supports query parameter, form field, or JSON body with intervalMs. Applies interval at runtime and persists it to LittleFS; mirrors to SD when /config.json exists on SD.",
         "parameters": [
           {
             "name": "intervalMs",
@@ -213,10 +213,10 @@
             }
           },
           "500": {
-            "description": "Sensors unavailable",
+            "description": "Interval changed at runtime but persistence failed",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/ErrorResponse"}
+                "schema": {"$ref": "#/components/schemas/IntervalSetResponse"}
               }
             }
           },
@@ -229,6 +229,7 @@
         "tags": ["sensors"],
         "operationId": "setSensorIntervalPut",
         "summary": "Set sensor interval (semantic update)",
+        "description": "Applies interval at runtime and persists it to LittleFS; mirrors to SD when /config.json exists on SD.",
         "parameters": [
           {
             "name": "intervalMs",
@@ -275,10 +276,10 @@
             }
           },
           "500": {
-            "description": "Sensors unavailable",
+            "description": "Interval changed at runtime but persistence failed",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/ErrorResponse"}
+                "schema": {"$ref": "#/components/schemas/IntervalSetResponse"}
               }
             }
           },
@@ -455,6 +456,78 @@
         "responses": {
           "200": {
             "description": "OTA accepted, reboot pending",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/OtaSuccessResponse"}
+              }
+            }
+          },
+          "400": {
+            "description": "Upload rejected",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/OtaErrorResponse"}
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/ota/fs": {
+      "post": {
+        "tags": ["ota"],
+        "operationId": "postOtaFilesystemUpload",
+        "summary": "Upload OTA LittleFS image",
+        "description": "Uploads a LittleFS image (.bin) to the filesystem partition. Endpoint is active under the same OTA/security preconditions as firmware OTA.",
+        "parameters": [
+          {
+            "name": "X-OTA-SHA256",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-fA-F0-9]{64}$"
+            },
+            "description": "Recommended integrity header"
+          },
+          {
+            "name": "X-OTA-MD5",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-fA-F0-9]{32}$"
+            },
+            "description": "Legacy integrity header"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["filesystem"],
+                "properties": {
+                  "filesystem": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "LittleFS image .bin file"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {"bearerAuth": []}
+        ],
+        "responses": {
+          "200": {
+            "description": "LittleFS OTA accepted, reboot pending",
             "content": {
               "application/json": {
                 "schema": {"$ref": "#/components/schemas/OtaSuccessResponse"}
@@ -686,7 +759,11 @@
         "required": ["intervalMs", "ok"],
         "properties": {
           "intervalMs": {"type": "integer"},
-          "ok": {"type": "boolean"}
+          "ok": {"type": "boolean"},
+          "persisted": {"type": "boolean"},
+          "savedToLittleFs": {"type": "boolean"},
+          "savedToSd": {"type": "boolean"},
+          "message": {"type": "string"}
         }
       },
       "SystemResponse": {

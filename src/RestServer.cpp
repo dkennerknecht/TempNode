@@ -7,6 +7,7 @@
 #include "HistoryManager.h"
 #include "StatsManager.h"
 #include "MqttClientManager.h"
+#include "ConfigManager.h"
 #include "TempNodeCore.h"
 #include <ArduinoJson.h>
 #include <SD.h>
@@ -14,6 +15,7 @@
 #include <esp_app_desc.h>
 #include <esp_app_format.h>
 #include <esp_ota_ops.h>
+#include <esp_partition.h>
 #include <cstring>
 
 static const char* timeSourceStr(uint8_t src) {
@@ -61,7 +63,7 @@ void RestServer::resetOtaState() {
   _otaSha256Expected.fill(0);
 }
 
-bool RestServer::otaPrecheck(AsyncWebServerRequest* req, const String& filename) {
+bool RestServer::otaPrecheck(AsyncWebServerRequest* req, const String& filename, OtaTarget target) {
   if (!_cfg->security.enabled || !_cfg->security.restToken.length()) {
     _otaRejectReason = "OTA requires security.enabled=true and restToken";
     return false;
@@ -81,7 +83,7 @@ bool RestServer::otaPrecheck(AsyncWebServerRequest* req, const String& filename)
     return false;
   }
   if (!filename.endsWith(".bin")) {
-    _otaRejectReason = "firmware filename must end with .bin";
+    _otaRejectReason = "upload filename must end with .bin";
     return false;
   }
 
@@ -91,14 +93,31 @@ bool RestServer::otaPrecheck(AsyncWebServerRequest* req, const String& filename)
     return false;
   }
 
-  const esp_partition_t* target = esp_ota_get_next_update_partition(nullptr);
-  if (!target) {
-    _otaRejectReason = "no OTA target partition";
-    return false;
-  }
-  if (contentLen > target->size) {
-    _otaRejectReason = "firmware too large for OTA partition";
-    return false;
+  const esp_partition_t* targetPart = nullptr;
+  int command = U_FLASH;
+  const char* uploadName = "firmware OTA";
+  if (target == OtaTarget::Firmware) {
+    targetPart = esp_ota_get_next_update_partition(nullptr);
+    if (!targetPart) {
+      _otaRejectReason = "no OTA target partition";
+      return false;
+    }
+    if (contentLen > targetPart->size) {
+      _otaRejectReason = "firmware too large for OTA partition";
+      return false;
+    }
+  } else {
+    command = U_SPIFFS;
+    uploadName = "LittleFS OTA";
+    targetPart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, nullptr);
+    if (!targetPart) {
+      _otaRejectReason = "no filesystem partition found for OTA";
+      return false;
+    }
+    if (contentLen > targetPart->size) {
+      _otaRejectReason = "filesystem image too large for partition";
+      return false;
+    }
   }
 
   bool hashHeaderProvided = false;
@@ -139,14 +158,70 @@ bool RestServer::otaPrecheck(AsyncWebServerRequest* req, const String& filename)
   _otaHeaderBytes = 0;
   _otaVersionChecked = false;
 
-  if (!Update.begin(contentLen, U_FLASH, -1, LOW, target->label)) {
+  if (!Update.begin(contentLen, command, -1, LOW, targetPart->label)) {
     _otaRejectReason = String("Update.begin failed: ") + Update.errorString();
     return false;
   }
 
   String integrity = _otaSha256ExpectedSet ? "sha256" : (_otaMd5ExpectedSet ? "md5" : "none");
-  _log->warn(String("OTA precheck ok: target=") + target->label + " size=" + String((unsigned)contentLen) + " hash=" + integrity);
+  _log->warn(String(uploadName) + " precheck ok: target=" + targetPart->label + " size=" + String((unsigned)contentLen) + " hash=" + integrity);
   return true;
+}
+
+bool RestServer::otaFinalize(AsyncWebServerRequest* req, const char* uploadName) {
+  bool ok = false;
+  String err = _otaRejectReason;
+
+  if (!_otaRejected && !Update.hasError()) {
+    if (_otaExpectedBytes == 0) {
+      err = String(uploadName) + " precheck not initialized";
+    } else if (_otaReceivedBytes != _otaExpectedBytes) {
+      err = String(uploadName) + " size mismatch: got " + (unsigned)_otaReceivedBytes + ", expected " + (unsigned)_otaExpectedBytes;
+    } else {
+      if (_otaSha256ExpectedSet && _otaSha256Active) {
+        uint8_t computed[32] = {0};
+        mbedtls_sha256_finish(&_otaSha256Ctx, computed);
+        if (memcmp(computed, _otaSha256Expected.data(), _otaSha256Expected.size()) != 0) {
+          err = String("SHA-256 mismatch: expected ") + bytesToHex(_otaSha256Expected.data(), _otaSha256Expected.size()) +
+                ", got " + bytesToHex(computed, sizeof(computed));
+        }
+        mbedtls_sha256_free(&_otaSha256Ctx);
+        _otaSha256Active = false;
+      }
+
+      if (!err.length()) {
+        if (Update.end(false)) {
+          ok = true;
+        } else {
+          err = String("Update.end failed: ") + Update.errorString();
+        }
+      }
+    }
+  } else if (!err.length()) {
+    err = Update.hasError() ? String(Update.errorString()) : "upload rejected";
+  }
+
+  _log->setPaused(false);
+  _history->setPaused(false);
+
+  if (ok) {
+    req->send(200, "application/json", "{\"status\":\"ok\",\"reboot\":true}");
+    _log->warn(String(uploadName) + " done, rebooting");
+    resetOtaState();
+    ESP.restart();
+    return true;
+  }
+
+  if (Update.isRunning()) Update.abort();
+  _log->error(String(uploadName) + " failed: " + err);
+  JsonDocument doc;
+  doc["status"] = "error";
+  doc["message"] = err;
+  String out;
+  serializeJson(doc, out);
+  req->send(400, "application/json", out);
+  resetOtaState();
+  return false;
 }
 
 bool RestServer::otaCheckVersionChunk(const uint8_t* data, size_t len) {
@@ -237,7 +312,8 @@ void RestServer::begin(const AppConfig& cfg,
                        SensorManager& sensors,
                        HistoryManager& history,
                        StatsManager& stats,
-                       MqttClientManager& mqtt) {
+                       MqttClientManager& mqtt,
+                       ConfigManager& cfgManager) {
   _cfg = &cfg;
   _log = &log;
   _tm = &tm;
@@ -246,6 +322,7 @@ void RestServer::begin(const AppConfig& cfg,
   _history = &history;
   _stats = &stats;
   _mqtt = &mqtt;
+  _cfgManager = &cfgManager;
 
   if (!cfg.rest.enabled) return;
 
@@ -440,6 +517,7 @@ void RestServer::setupRoutes() {
   auto setIntervalHandler = [this](AsyncWebServerRequest* req) {
     if (!authOk(req)) return;
     if (!_sensors) return sendError(req, 500, "sensors unavailable");
+    if (!_cfgManager) return sendError(req, 500, "config manager unavailable");
 
     uint32_t ms = 0;
 
@@ -464,12 +542,39 @@ void RestServer::setupRoutes() {
 
     if (ms == 0) return sendError(req, 400, "missing intervalMs");
 
+    // Apply runtime interval immediately and persist clamped value to config.
     _sensors->setIntervalMs(ms);
+
+    uint32_t appliedMs = _sensors->intervalMs();
+    bool savedLittleFs = false;
+    bool savedSd = false;
+    String persistErr;
+    const bool persisted = _cfgManager->updateSensorIntervalAndPersist(
+      appliedMs,
+      _log->sdAvailable(),
+      &appliedMs,
+      &savedLittleFs,
+      &savedSd,
+      &persistErr
+    );
+
+    // Ensure runtime uses exactly what was persisted.
+    _sensors->setIntervalMs(appliedMs);
 
     JsonDocument doc;
     doc["intervalMs"] = _sensors->intervalMs();
-    doc["ok"] = true;
-    sendJson(req, doc);
+    doc["ok"] = persisted;
+    doc["persisted"] = persisted;
+    doc["savedToLittleFs"] = savedLittleFs;
+    doc["savedToSd"] = savedSd;
+
+    if (!persisted) {
+      doc["message"] = persistErr.length() ? persistErr : "failed to persist config";
+      sendJson(req, doc, 500);
+      return;
+    }
+
+    sendJson(req, doc, 200);
   };
 
   _srv->on("/api/v1/sensors/interval", HTTP_POST, setIntervalHandler);
@@ -565,57 +670,7 @@ void RestServer::setupRoutes() {
       _srv->on("/api/v1/ota", HTTP_POST,
         [this](AsyncWebServerRequest* req) {
           if (!authOk(req)) return;
-
-          bool ok = false;
-          String err = _otaRejectReason;
-
-          if (!_otaRejected && !Update.hasError()) {
-            if (_otaExpectedBytes == 0) {
-              err = "OTA precheck not initialized";
-            } else if (_otaReceivedBytes != _otaExpectedBytes) {
-              err = String("OTA size mismatch: got ") + (unsigned)_otaReceivedBytes + ", expected " + (unsigned)_otaExpectedBytes;
-            } else {
-              if (_otaSha256ExpectedSet && _otaSha256Active) {
-                uint8_t computed[32] = {0};
-                mbedtls_sha256_finish(&_otaSha256Ctx, computed);
-                if (memcmp(computed, _otaSha256Expected.data(), _otaSha256Expected.size()) != 0) {
-                  err = String("SHA-256 mismatch: expected ") + bytesToHex(_otaSha256Expected.data(), _otaSha256Expected.size()) +
-                        ", got " + bytesToHex(computed, sizeof(computed));
-                }
-                mbedtls_sha256_free(&_otaSha256Ctx);
-                _otaSha256Active = false;
-              }
-
-              if (!err.length()) {
-                if (Update.end(false)) {
-                  ok = true;
-                } else {
-                  err = String("Update.end failed: ") + Update.errorString();
-                }
-              }
-            }
-          } else if (!err.length()) {
-            err = Update.hasError() ? String(Update.errorString()) : "upload rejected";
-          }
-
-          _log->setPaused(false);
-          _history->setPaused(false);
-
-          if (ok) {
-            req->send(200, "application/json", "{\"status\":\"ok\",\"reboot\":true}");
-            _log->warn("OTA done, rebooting");
-            resetOtaState();
-            ESP.restart();
-            return;
-          }
-
-          if (Update.isRunning()) Update.abort();
-          _log->error(String("OTA failed: ") + err);
-          JsonDocument doc;
-          doc["status"] = "error";
-          doc["message"] = err;
-          sendJson(req, doc, 400);
-          resetOtaState();
+          (void)otaFinalize(req, "firmware OTA");
         },
         [this](AsyncWebServerRequest* req, const String& filename, size_t index, uint8_t* data, size_t len, bool final) {
           if (!authOk(req)) return;
@@ -626,7 +681,7 @@ void RestServer::setupRoutes() {
             _log->setPaused(true);
             _history->setPaused(true);
 
-            if (!otaPrecheck(req, filename)) {
+            if (!otaPrecheck(req, filename, OtaTarget::Firmware)) {
               _otaRejected = true;
               _log->error(String("OTA precheck failed: ") + _otaRejectReason);
               return;
@@ -641,6 +696,54 @@ void RestServer::setupRoutes() {
             if (Update.isRunning()) Update.abort();
             return;
           }
+
+          if (_otaSha256Active) {
+            mbedtls_sha256_update(&_otaSha256Ctx, data, len);
+          }
+
+          if (!Update.hasError()) {
+            size_t written = Update.write(data, len);
+            if (written != len) {
+              _otaRejected = true;
+              _otaRejectReason = String("Update.write failed: ") + Update.errorString();
+              _log->error(_otaRejectReason);
+              if (Update.isRunning()) Update.abort();
+              return;
+            }
+            _otaReceivedBytes += len;
+          }
+
+          if (final && _otaExpectedBytes && _otaReceivedBytes != _otaExpectedBytes) {
+            _otaRejected = true;
+            _otaRejectReason = String("incomplete upload: got ") + (unsigned)_otaReceivedBytes + ", expected " + (unsigned)_otaExpectedBytes;
+            _log->error(_otaRejectReason);
+            if (Update.isRunning()) Update.abort();
+          }
+        }
+      );
+
+      _srv->on("/api/v1/ota/fs", HTTP_POST,
+        [this](AsyncWebServerRequest* req) {
+          if (!authOk(req)) return;
+          (void)otaFinalize(req, "LittleFS OTA");
+        },
+        [this](AsyncWebServerRequest* req, const String& filename, size_t index, uint8_t* data, size_t len, bool final) {
+          if (!authOk(req)) return;
+
+          if (index == 0) {
+            resetOtaState();
+            _log->warn(String("LittleFS OTA start: ") + filename);
+            _log->setPaused(true);
+            _history->setPaused(true);
+
+            if (!otaPrecheck(req, filename, OtaTarget::Filesystem)) {
+              _otaRejected = true;
+              _log->error(String("LittleFS OTA precheck failed: ") + _otaRejectReason);
+              return;
+            }
+          }
+
+          if (_otaRejected) return;
 
           if (_otaSha256Active) {
             mbedtls_sha256_update(&_otaSha256Ctx, data, len);

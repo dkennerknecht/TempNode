@@ -150,7 +150,7 @@ When `security.enabled=true`, endpoints require auth (Bearer token or Basic auth
 | GET | `/health` | Detailed status with subsystem checks |
 | GET | `/temps` | Latest reading for all discovered sensors |
 | GET | `/sensors` | Sensor summary and interval |
-| GET/POST/PUT | `/sensors/interval` | Read/set sensor interval |
+| GET/POST/PUT | `/sensors/interval` | Read/set sensor interval (persisted to LittleFS, mirrored to SD when `/config.json` exists) |
 | GET | `/system` | Runtime diagnostics |
 | GET | `/metrics` | Runtime + persisted counters |
 | GET | `/history` | Tail history (`sensor`, `limit`) |
@@ -208,6 +208,11 @@ OTA endpoint is active only when all conditions are met:
 - `security.enabled=true`
 - `security.restToken` is set
 
+Available endpoints:
+
+- `POST /api/v1/ota` for firmware image uploads
+- `POST /api/v1/ota/fs` for LittleFS image uploads
+
 Validation includes:
 
 - Bearer token check
@@ -216,6 +221,11 @@ Validation includes:
 - partition size fit
 - hash check (`X-OTA-SHA256` recommended, `X-OTA-MD5` supported)
 - version gate (if `ota.allowDowngrade=false`)
+
+Build artifacts for OTA testing:
+
+- Firmware image: `.pio/build/esp32s3/firmware.bin` (`pio run -e esp32s3`)
+- LittleFS image: `.pio/build/esp32s3/littlefs.bin` (`pio run -e esp32s3 -t buildfs`)
 
 ## Persistence and Logging
 
