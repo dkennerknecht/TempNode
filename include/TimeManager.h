@@ -34,11 +34,14 @@ private:
   TimeSource _source = TimeSource::UPTIME;
   uint64_t _bootUptimeMs = 0;
   uint64_t _lastSyncUptimeMs = 0;
+  String _tz = "CET-1CEST,M3.5.0/2,M10.5.0/3";
 
   bool _ntpRequested = false;
   uint32_t _ntpNextTryMs = 0;
+  uint32_t _nextPeriodicSyncMs = 0;
   uint8_t _ntpAttempts = 0;
   StatsManager* _stats = nullptr;
 
+  void _startSntp();
   void _applyTimeValid();
 };

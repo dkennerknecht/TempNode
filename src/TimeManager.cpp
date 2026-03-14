@@ -2,23 +2,33 @@
 #include "StatsManager.h"
 #include <time.h>
 
+static constexpr time_t kMinValidEpochSec = 1700000000;            // ~2023-11
+static constexpr uint32_t kPeriodicResyncMs = 6UL * 60UL * 60UL * 1000UL;
+
+void TimeManager::_startSntp() {
+  setenv("TZ", _tz.c_str(), 1);
+  tzset();
+  configTzTime(_tz.c_str(), "pool.ntp.org", "time.nist.gov");
+}
+
 void TimeManager::begin(const char* tz) {
   _bootUptimeMs = millis();
   _timeValid = false;
   _source = TimeSource::UPTIME;
-
-  setenv("TZ", tz, 1);
-  tzset();
+  _tz = tz ? tz : "CET-1CEST,M3.5.0/2,M10.5.0/3";
 
   // NTP config (async)
-  configTzTime(tz, "pool.ntp.org", "time.nist.gov");
+  _startSntp();
   _ntpRequested = true;
   _ntpNextTryMs = 0;
+  _nextPeriodicSyncMs = millis() + kPeriodicResyncMs;
   _ntpAttempts = 0;
 }
 
 void TimeManager::requestNtpSync() {
+  _startSntp();
   _ntpRequested = true;
+  _ntpNextTryMs = 0;
 }
 
 void TimeManager::_applyTimeValid() {
@@ -28,21 +38,43 @@ void TimeManager::_applyTimeValid() {
 }
 
 void TimeManager::loop() {
-  if (!_ntpRequested) return;
-
   uint32_t nowMs = millis();
+
+  if (_timeValid && (int32_t)(nowMs - _nextPeriodicSyncMs) >= 0) {
+    requestNtpSync();
+    _nextPeriodicSyncMs = nowMs + kPeriodicResyncMs;
+  }
+
+  if (!_ntpRequested) return;
   if ((int32_t)(nowMs - _ntpNextTryMs) < 0) return;
 
-  struct tm t;
-  if (getLocalTime(&t, 10)) {
+  time_t nowSec = 0;
+  time(&nowSec);
+  if (nowSec >= kMinValidEpochSec) {
+    bool wasInvalid = !_timeValid;
     _applyTimeValid();
     _ntpRequested = false;
     _ntpAttempts = 0;
+    _nextPeriodicSyncMs = nowMs + kPeriodicResyncMs;
+
+    if (wasInvalid) {
+      struct tm t;
+      localtime_r(&nowSec, &t);
+      char buf[32];
+      snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
+               t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
+               t.tm_hour, t.tm_min, t.tm_sec);
+      Serial.println(String("NTP sync ok: ") + buf);
+    }
     return;
   }
 
   if (_stats) {
     _stats->incrementNtpSyncFails();
+  }
+
+  if (_ntpAttempts == 0 || (_ntpAttempts % 5) == 0) {
+    _startSntp();
   }
 
   // backoff: 1s,2s,4s,8s.. max 60s
