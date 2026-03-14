@@ -553,13 +553,29 @@
       },
       "HealthSd": {
         "type": "object",
-        "required": ["required", "available", "ok", "sdMountFails", "sdWriteFails"],
+        "required": [
+          "required",
+          "available",
+          "ok",
+          "sdMountFails",
+          "sdWriteFails",
+          "diskSizeBytes",
+          "diskUsedBytes",
+          "diskFreeBytes",
+          "usagePercent",
+          "capacityKnown"
+        ],
         "properties": {
           "required": {"type": "boolean"},
           "available": {"type": "boolean"},
           "ok": {"type": "boolean"},
           "sdMountFails": {"type": "integer"},
-          "sdWriteFails": {"type": "integer"}
+          "sdWriteFails": {"type": "integer"},
+          "diskSizeBytes": {"type": "integer"},
+          "diskUsedBytes": {"type": "integer"},
+          "diskFreeBytes": {"type": "integer"},
+          "usagePercent": {"type": "number"},
+          "capacityKnown": {"type": "boolean"}
         }
       },
       "HealthTime": {

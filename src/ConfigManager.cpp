@@ -34,6 +34,8 @@ void ConfigManager::begin(LogManager& log) {
 
 void ConfigManager::applyDefaults() {
   _cfg = AppConfig{};
+  _cfg.mqtt.publishHealth = true;
+  _cfg.mqtt.healthIntervalMs = 15000;
   syncFeatureFlags();
 }
 
@@ -98,6 +100,8 @@ bool ConfigManager::parseJson(const String& json) {
   _cfg.mqtt.offlineBufferPerSensor = doc["mqtt"]["offlineBufferPerSensor"] | _cfg.mqtt.offlineBufferPerSensor;
   _cfg.mqtt.reconnectMinMs = doc["mqtt"]["reconnectMinMs"] | _cfg.mqtt.reconnectMinMs;
   _cfg.mqtt.reconnectMaxMs = doc["mqtt"]["reconnectMaxMs"] | _cfg.mqtt.reconnectMaxMs;
+  _cfg.mqtt.publishHealth = doc["mqtt"]["publishHealth"] | _cfg.mqtt.publishHealth;
+  _cfg.mqtt.healthIntervalMs = doc["mqtt"]["healthIntervalMs"] | _cfg.mqtt.healthIntervalMs;
   _cfg.mqtt.tls = doc["mqtt"]["tls"] | _cfg.mqtt.tls;
   _cfg.mqtt.user = String((const char*)(doc["mqtt"]["user"] | _cfg.mqtt.user.c_str()));
   _cfg.mqtt.pass = String((const char*)(doc["mqtt"]["pass"] | _cfg.mqtt.pass.c_str()));
@@ -157,6 +161,11 @@ bool ConfigManager::validate() {
 
   if (_cfg.mqtt.reconnectMinMs < 250) _cfg.mqtt.reconnectMinMs = 250;
   if (_cfg.mqtt.reconnectMaxMs < _cfg.mqtt.reconnectMinMs) _cfg.mqtt.reconnectMaxMs = _cfg.mqtt.reconnectMinMs;
+  if (_cfg.mqtt.healthIntervalMs == 0) _cfg.mqtt.healthIntervalMs = 15000;
+  if (_cfg.mqtt.healthIntervalMs < 1000) {
+    _log->warn("config: mqtt.healthIntervalMs too low, forcing 1000ms");
+    _cfg.mqtt.healthIntervalMs = 1000;
+  }
 
   if (_cfg.mqtt.enabled && _cfg.mqtt.tls) {
     _log->warn("config: mqtt.tls=true requested but unsupported by current MQTT client build. MQTT will be disabled to avoid insecure fallback.");

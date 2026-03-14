@@ -31,6 +31,8 @@ struct MqttConfig {
   uint32_t reconnectMinMs;
   uint32_t reconnectMaxMs;
   uint16_t offlineBufferPerSensor; // ringbuffer size per sensor
+  bool publishHealth;
+  uint32_t healthIntervalMs;
 };
 
 struct OtaConfig {

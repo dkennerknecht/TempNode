@@ -18,6 +18,8 @@
     "port": 1883,
     "baseTopic": "device",
     "offlineBufferPerSensor": 20,
+    "publishHealth": true,
+    "healthIntervalMs": 15000,
     "reconnectMinMs": 1000,
     "reconnectMaxMs": 60000
   },

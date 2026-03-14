@@ -141,7 +141,7 @@ pio device monitor
 - `network`: DHCP or static IP (`ip/gw/mask/dns`)
 - `sensors`: interval, resolution, conversion timeout
 - `rest`: enable/disable and port
-- `mqtt`: broker, optional auth (`user/pass`), topic base, reconnect bounds, offline buffer size
+- `mqtt`: broker, optional auth (`user/pass`), topic base, reconnect bounds, offline buffer size, health publish toggle/interval
 - `history`: JSONL path + flush behavior
 - `logging`: per-target log levels (console/SD) plus SD rotation/retention
 - `metrics`: toggle `/api/v1/metrics`
@@ -188,7 +188,7 @@ curl -sS "http://$NODE_IP/api/v1/health"
 curl -sS "http://$NODE_IP/api/v1/temps"
 ```
 
-`/health` response now includes per-subsystem detail fields under `checks.*` (for example `checks.network.up`, `checks.mqtt.connected`, `checks.mqtt.resolveOk`, `checks.mqtt.tcpProbeOpen`, `checks.sd.available`, `checks.time.valid`, `checks.ota_state.imageState`).
+`/health` response now includes per-subsystem detail fields under `checks.*` (for example `checks.network.up`, `checks.mqtt.connected`, `checks.mqtt.resolveOk`, `checks.mqtt.tcpProbeOpen`, `checks.sd.available`, `checks.sd.diskUsedBytes`, `checks.sd.usagePercent`, `checks.time.valid`, `checks.ota_state.imageState`).
 
 Bearer token:
 
@@ -209,6 +209,7 @@ Broker authentication is configured via `mqtt.user` and `mqtt.pass`.
 If both are empty, the client attempts anonymous MQTT login.
 Legacy fallback from `security.mqttUser`/`security.mqttPass` is still supported for older configs.
 On reconnect attempts, serial logs include host, port, user, clientId, plus diagnostics (DNS resolve, ping, TCP probe on configured and common alternate MQTT port).
+Health payload publishing can be configured via `mqtt.publishHealth` and `mqtt.healthIntervalMs`.
 
 ### Topic Layout
 
@@ -216,6 +217,7 @@ Default (`baseTopic = device`):
 
 - `device/<deviceId>/temps/<sensorId>` (retained)
 - `device/<deviceId>/system` (retained)
+- `device/<deviceId>/health` (retained)
 - `device/<deviceId>/status` (retained, LWT)
 
 ### Payload Examples

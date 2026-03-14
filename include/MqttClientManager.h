@@ -40,6 +40,7 @@ public:
   uint32_t lastDiagUptimeMs() const { return _diagAtUptimeMs; }
   void publishSensor(const SensorReading& r);
   void publishSystem();
+  void publishHealth();
   void publishStatus(const char* status, bool retain=true);
 
 private:
@@ -68,6 +69,7 @@ private:
   String _pass;
   bool _tls = false;
   uint32_t _connectAttempts = 0;
+  uint32_t _nextHealthPublishMs = 0;
 
   bool _diagResolveOk = false;
   String _diagResolvedIp;
@@ -97,10 +99,12 @@ private:
 
   String topicTemps(const String& sensorId) const;
   String topicSystem() const;
+  String topicHealth() const;
   String topicStatus() const;
 
   String readingToJson(const SensorReading& r) const;
   String systemToJson() const;
+  String healthToJson() const;
 
   void ensureRing(const String& sensorId);
   void ringPush(const String& sensorId, const BufferedMsg& m);

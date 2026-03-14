@@ -9,6 +9,7 @@
 #include "MqttClientManager.h"
 #include "TempNodeCore.h"
 #include <ArduinoJson.h>
+#include <SD.h>
 #include <Update.h>
 #include <esp_app_desc.h>
 #include <esp_app_format.h>
@@ -270,6 +271,21 @@ void RestServer::setupRoutes() {
     const bool sdRequired = _cfg->history.enabled;
     const bool sdAvailable = _log->sdAvailable();
     const bool sdOk = !sdRequired || sdAvailable;
+    uint64_t sdSizeBytes = 0;
+    uint64_t sdUsedBytes = 0;
+    uint64_t sdFreeBytes = 0;
+    double sdUsagePercent = 0.0;
+    bool sdCapacityKnown = false;
+    if (sdAvailable) {
+      sdSizeBytes = (uint64_t)SD.totalBytes();
+      sdUsedBytes = (uint64_t)SD.usedBytes();
+      if (sdSizeBytes > 0) {
+        if (sdUsedBytes > sdSizeBytes) sdUsedBytes = sdSizeBytes;
+        sdFreeBytes = sdSizeBytes - sdUsedBytes;
+        sdUsagePercent = ((double)sdUsedBytes * 100.0) / (double)sdSizeBytes;
+        sdCapacityKnown = true;
+      }
+    }
 
     constexpr uint32_t kTimeStaleThresholdMs = 6UL * 60UL * 60UL * 1000UL;
     const bool timeValid = _tm->timeValid();
@@ -332,6 +348,11 @@ void RestServer::setupRoutes() {
     sd["ok"] = sdOk;
     sd["sdMountFails"] = st.sdMountFails;
     sd["sdWriteFails"] = st.sdWriteFails;
+    sd["diskSizeBytes"] = sdSizeBytes;
+    sd["diskUsedBytes"] = sdUsedBytes;
+    sd["diskFreeBytes"] = sdFreeBytes;
+    sd["usagePercent"] = sdUsagePercent;
+    sd["capacityKnown"] = sdCapacityKnown;
 
     JsonObject time = checks["time"].to<JsonObject>();
     time["valid"] = timeValid;

@@ -7,7 +7,9 @@
 #include "SensorManager.h"
 #include <ArduinoJson.h>
 #include <NetworkClient.h>
+#include <SD.h>
 #include <WiFi.h>
+#include <esp_ota_ops.h>
 #include <ping/ping_sock.h>
 
 static const char* mqttDisconnectReasonName(AsyncMqttClientDisconnectReason reason) {
@@ -20,6 +22,18 @@ static const char* mqttDisconnectReasonName(AsyncMqttClientDisconnectReason reas
     case AsyncMqttClientDisconnectReason::MQTT_NOT_AUTHORIZED: return "MQTT_NOT_AUTHORIZED";
     case AsyncMqttClientDisconnectReason::ESP8266_NOT_ENOUGH_SPACE: return "ESP8266_NOT_ENOUGH_SPACE";
     case AsyncMqttClientDisconnectReason::TLS_BAD_FINGERPRINT: return "TLS_BAD_FINGERPRINT";
+    default: return "UNKNOWN";
+  }
+}
+
+static const char* otaImgStateStr(esp_ota_img_states_t state) {
+  switch (state) {
+    case ESP_OTA_IMG_NEW: return "NEW";
+    case ESP_OTA_IMG_PENDING_VERIFY: return "PENDING_VERIFY";
+    case ESP_OTA_IMG_VALID: return "VALID";
+    case ESP_OTA_IMG_INVALID: return "INVALID";
+    case ESP_OTA_IMG_ABORTED: return "ABORTED";
+    case ESP_OTA_IMG_UNDEFINED: return "UNDEFINED";
     default: return "UNKNOWN";
   }
 }
@@ -113,6 +127,8 @@ void MqttClientManager::begin(const AppConfig& cfg, AppNetworkManager& net, LogM
     _log->info("MQTT connected");
     publishStatus("online", true);
     flushBuffers();
+    _nextHealthPublishMs = millis();
+    publishHealth();
   });
 
   _mqtt.onDisconnect([this](AsyncMqttClientDisconnectReason reason) {
@@ -259,6 +275,10 @@ String MqttClientManager::topicSystem() const {
   return _base + "/" + _deviceId + "/system";
 }
 
+String MqttClientManager::topicHealth() const {
+  return _base + "/" + _deviceId + "/health";
+}
+
 String MqttClientManager::topicStatus() const {
   return _base + "/" + _deviceId + "/status";
 }
@@ -286,6 +306,126 @@ String MqttClientManager::systemToJson() const {
   doc["mqtt"] = _connected;
   doc["heap"] = ESP.getFreeHeap();
   doc["uptimeMs"] = (uint64_t)_tm->uptimeMs();
+  String out;
+  serializeJson(doc, out);
+  return out;
+}
+
+String MqttClientManager::healthToJson() const {
+  PersistedStats st = _stats->snapshot();
+  TimeStamp ts = _tm->now();
+
+  const bool networkOk = _net->isUp();
+
+  const bool mqttRequired = _cfg->mqtt.enabled;
+  const bool mqttConnected = _connected;
+  const bool mqttOk = !mqttRequired || mqttConnected;
+
+  const bool sdRequired = _cfg->history.enabled;
+  const bool sdAvailable = _log->sdAvailable();
+  const bool sdOk = !sdRequired || sdAvailable;
+  uint64_t sdSizeBytes = 0;
+  uint64_t sdUsedBytes = 0;
+  uint64_t sdFreeBytes = 0;
+  double sdUsagePercent = 0.0;
+  bool sdCapacityKnown = false;
+  if (sdAvailable) {
+    sdSizeBytes = (uint64_t)SD.totalBytes();
+    sdUsedBytes = (uint64_t)SD.usedBytes();
+    if (sdSizeBytes > 0) {
+      if (sdUsedBytes > sdSizeBytes) sdUsedBytes = sdSizeBytes;
+      sdFreeBytes = sdSizeBytes - sdUsedBytes;
+      sdUsagePercent = ((double)sdUsedBytes * 100.0) / (double)sdSizeBytes;
+      sdCapacityKnown = true;
+    }
+  }
+
+  constexpr uint32_t kTimeStaleThresholdMs = 6UL * 60UL * 60UL * 1000UL;
+  const bool timeValid = _tm->timeValid();
+  const bool timeStale = timeValid ? _tm->timeStale(kTimeStaleThresholdMs) : false;
+  const bool timeOk = timeValid && !timeStale;
+
+  const bool otaEnabled = _cfg->ota.enabled;
+  const bool otaEndpointActive = otaEnabled &&
+                                 _cfg->security.enabled &&
+                                 _cfg->security.restToken.length() &&
+                                 _cfg->ota.allowInsecureHttp;
+
+  esp_ota_img_states_t imgState = ESP_OTA_IMG_UNDEFINED;
+  bool imgStateKnown = false;
+  const esp_partition_t* running = esp_ota_get_running_partition();
+  if (running && esp_ota_get_state_partition(running, &imgState) == ESP_OK) {
+    imgStateKnown = true;
+  }
+  const bool otaPendingVerify = imgStateKnown && (imgState == ESP_OTA_IMG_PENDING_VERIFY);
+  const bool otaOk = !otaEnabled || otaEndpointActive;
+
+  const bool ok = networkOk && mqttOk && sdOk && otaOk;
+
+  JsonDocument doc;
+  doc["status"] = ok ? "ok" : "degraded";
+  doc["timestamp"] = (uint64_t)ts.epochMs;
+
+  JsonObject checks = doc["checks"].to<JsonObject>();
+
+  JsonObject network = checks["network"].to<JsonObject>();
+  network["ok"] = networkOk;
+  network["up"] = _net->isUp();
+  network["link"] = _net->linkUp();
+  network["ip"] = _net->ip().toString();
+  network["mac"] = _net->macStr();
+
+  JsonObject mqtt = checks["mqtt"].to<JsonObject>();
+  mqtt["required"] = mqttRequired;
+  mqtt["enabled"] = _cfg->mqtt.enabled;
+  mqtt["connected"] = mqttConnected;
+  mqtt["ok"] = mqttOk;
+  mqtt["host"] = _host;
+  mqtt["port"] = _port;
+  mqtt["user"] = authUserLabel();
+  mqtt["connectAttempts"] = _connectAttempts;
+  mqtt["diagLastUptimeMs"] = (uint64_t)_diagAtUptimeMs;
+  mqtt["resolveOk"] = _diagResolveOk;
+  mqtt["resolvedIp"] = _diagResolvedIp;
+  mqtt["pingOk"] = _diagPingOk;
+  mqtt["pingMs"] = (uint64_t)_diagPingMs;
+  mqtt["tcpProbePort"] = _diagTcpPort;
+  mqtt["tcpProbeOpen"] = _diagTcpOpen;
+  mqtt["altPortChecked"] = _diagAltChecked;
+  mqtt["altPort"] = _diagAltPort;
+  mqtt["altPortOpen"] = _diagAltOpen;
+
+  JsonObject sd = checks["sd"].to<JsonObject>();
+  sd["required"] = sdRequired;
+  sd["available"] = sdAvailable;
+  sd["ok"] = sdOk;
+  sd["sdMountFails"] = st.sdMountFails;
+  sd["sdWriteFails"] = st.sdWriteFails;
+  sd["diskSizeBytes"] = sdSizeBytes;
+  sd["diskUsedBytes"] = sdUsedBytes;
+  sd["diskFreeBytes"] = sdFreeBytes;
+  sd["usagePercent"] = sdUsagePercent;
+  sd["capacityKnown"] = sdCapacityKnown;
+
+  JsonObject time = checks["time"].to<JsonObject>();
+  time["valid"] = timeValid;
+  time["source"] = (ts.source == TimeSource::NTP) ? "NTP" : "UPTIME";
+  time["stale"] = timeStale;
+  time["ok"] = timeOk;
+  time["lastNtpSyncUptimeMs"] = (uint64_t)_tm->lastNtpSyncMs();
+  time["ntpSyncFails"] = st.ntpSyncFails;
+
+  JsonObject otaState = checks["ota_state"].to<JsonObject>();
+  otaState["enabled"] = otaEnabled;
+  otaState["endpointActive"] = otaEndpointActive;
+  otaState["pendingVerify"] = otaPendingVerify;
+  otaState["requireHashHeader"] = _cfg->ota.requireHashHeader;
+  otaState["allowDowngrade"] = _cfg->ota.allowDowngrade;
+  otaState["healthConfirmMs"] = _cfg->ota.healthConfirmMs;
+  otaState["ok"] = otaOk;
+  otaState["imageStateKnown"] = imgStateKnown;
+  otaState["imageState"] = otaImgStateStr(imgState);
+
   String out;
   serializeJson(doc, out);
   return out;
@@ -371,6 +511,15 @@ void MqttClientManager::publishSystem() {
   _mqtt.publish(topicSystem().c_str(), 0, true, out.c_str(), out.length());
 }
 
+void MqttClientManager::publishHealth() {
+  if (!_cfg) return;
+  if (!_cfg->mqtt.enabled) return;
+  if (!_cfg->mqtt.publishHealth) return;
+  if (!_connected) return;
+  String out = healthToJson();
+  _mqtt.publish(topicHealth().c_str(), 0, true, out.c_str(), out.length());
+}
+
 void MqttClientManager::loop() {
   if (!_cfg) return;
   if (!_cfg->mqtt.enabled) return;
@@ -388,5 +537,8 @@ void MqttClientManager::loop() {
       _mqtt.connect();
       scheduleReconnect();
     }
+  } else if (_cfg->mqtt.publishHealth && (int32_t)(now - _nextHealthPublishMs) >= 0) {
+    publishHealth();
+    _nextHealthPublishMs = now + _cfg->mqtt.healthIntervalMs;
   }
 }
