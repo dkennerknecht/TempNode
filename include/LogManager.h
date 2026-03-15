@@ -3,16 +3,19 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
+#include <WiFiUdp.h>
 
 class TimeManager;
 class StatsManager;
 struct LoggingConfig;
+struct TimeStamp;
 
 enum class LogLevel : uint8_t { DEBUG = 0, INFO = 1, WARN = 2, ERROR = 3 };
 
 struct LogItem {
   LogLevel level;
   uint32_t createdMs;
+  bool serialAlreadyWritten;
   char msg[256];
 };
 
@@ -36,6 +39,9 @@ public:
   void error(const String& s) { log(LogLevel::ERROR, s); }
 
   void log(LogLevel lvl, const String& s);
+  // Mirrors externally generated lines (e.g. ESP-IDF log output) into SD/syslog.
+  // Set serialAlreadyWritten=true when original output was already emitted to serial.
+  void forwardExternalLine(const char* line, bool serialAlreadyWritten = true);
 
   // Metrics
   uint32_t drops() const { return _drops; }
@@ -59,6 +65,17 @@ private:
   bool _rotateDaily = true;
   uint16_t _retentionDays = 0;
 
+  bool _syslogEnabled = false;
+  String _syslogHost = "";
+  uint16_t _syslogPort = 514;
+  LogLevel _syslogMinLevel = LogLevel::INFO;
+  String _syslogAppName = "tempnode";
+  uint8_t _syslogFacility = 16;
+  WiFiUDP _syslogUdp;
+  IPAddress _syslogResolvedIp;
+  bool _syslogIpValid = false;
+  uint32_t _syslogNextResolveMs = 0;
+
   QueueHandle_t _queue = nullptr;
   SemaphoreHandle_t _sdMutex = nullptr;
   TaskHandle_t _task = nullptr;
@@ -69,9 +86,13 @@ private:
 
   static void taskTrampoline(void* arg);
   void taskMain();
+  void enqueue(LogLevel lvl, const String& s, bool serialAlreadyWritten);
 
   void rotateIfNeeded();
   void applyRetentionIfNeeded();
+  bool resolveSyslogHost();
+  bool writeLineSyslog(LogLevel lvl, const char* msg, const TimeStamp& ts);
+  void resetSyslogResolver();
   void writeLineSerial(const char* line);
   bool writeLineSd(const char* line);
   const char* levelToStr(LogLevel lvl) const;

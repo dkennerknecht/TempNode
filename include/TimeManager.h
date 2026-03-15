@@ -2,6 +2,7 @@
 #include <Arduino.h>
 
 class StatsManager;
+class LogManager;
 
 enum class TimeSource : uint8_t { NTP = 0, UPTIME = 1 };
 
@@ -17,6 +18,7 @@ public:
   void begin(const char* tz = "CET-1CEST,M3.5.0/2,M10.5.0/3");
   void loop();
   void setStats(StatsManager* stats) { _stats = stats; }
+  void setLog(LogManager* log) { _log = log; }
 
   void requestNtpSync();
   bool timeValid() const { return _timeValid; }
@@ -41,6 +43,7 @@ private:
   uint32_t _nextPeriodicSyncMs = 0;
   uint8_t _ntpAttempts = 0;
   StatsManager* _stats = nullptr;
+  LogManager* _log = nullptr;
 
   void _startSntp();
   void _applyTimeValid();

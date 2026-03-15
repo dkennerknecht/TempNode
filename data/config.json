@@ -34,11 +34,19 @@
     "retentionDays": 30
   },
   "logging": {
-    "consoleLevel": "INFO",
+    "consoleLevel": "DEBUG",
     "sdLevel": "INFO",
     "sdEnabled": true,
     "rotateDaily": true,
-    "retentionDays": 30
+    "retentionDays": 30,
+    "syslog": {
+      "enabled": true,
+      "host": "192.168.1.119",
+      "port": 514,
+      "level": "DEBUG",
+      "appName": "tempnode",
+      "facility": 16
+    }
   },
   "metrics": {
     "enabled": true

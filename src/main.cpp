@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <SD.h>
 #include <LittleFS.h>
+#include <esp_log.h>
 
 #if __has_include(<esp32-hal-rgb-led.h>)
   #include <esp32-hal-rgb-led.h> // rgbLedWrite
@@ -42,6 +43,30 @@ static bool g_runNet = false;
 static bool g_runSensors = false;
 static bool g_runMqtt = false;
 static bool g_mqttEnabled = false;
+static vprintf_like_t g_prevEspLogVprintf = nullptr;
+static volatile bool g_inEspLogBridge = false;
+
+static int bridgedEspLogVprintf(const char* fmt, va_list args) {
+  va_list argsForPrev;
+  va_copy(argsForPrev, args);
+  const int out = g_prevEspLogVprintf ? g_prevEspLogVprintf(fmt, argsForPrev) : vprintf(fmt, argsForPrev);
+  va_end(argsForPrev);
+
+  if (!g_inEspLogBridge) {
+    g_inEspLogBridge = true;
+    char line[384];
+    va_list argsForLine;
+    va_copy(argsForLine, args);
+    const int n = vsnprintf(line, sizeof(line), fmt, argsForLine);
+    va_end(argsForLine);
+    if (n > 0) {
+      g_log.forwardExternalLine(line, true);
+    }
+    g_inEspLogBridge = false;
+  }
+
+  return out;
+}
 
 static String resetReasonStr() {
   esp_reset_reason_t r = esp_reset_reason();
@@ -89,7 +114,9 @@ void setup() {
 
   // logger (serial always) - SD availability later
   g_log.begin(g_time, g_stats, false);
+  g_time.setLog(&g_log);
   g_log.setLevel(LogLevel::INFO);
+  g_prevEspLogVprintf = esp_log_set_vprintf(bridgedEspLogVprintf);
 
   g_log.info("booting...");
   g_log.info(String("reset reason: ") + resetReason);
@@ -103,14 +130,15 @@ void setup() {
   }
 
   // SD
-  Serial.println("mounting SD (single attempt)...");
+  g_log.info("mounting SD (single attempt)...");
   bool sdOk = g_sd.mountWithTimeout(0, 20000000);
   if (!sdOk) {
     g_log.warn("SD mount failed/unavailable");
     g_stats.incrementSdMountFails();
+  } else {
+    g_log.info("SD mounted");
   }
   g_log.setSdAvailable(sdOk);
-  Serial.println("mounting SD (single attempt)...");
 
   g_stats.setSdAvailable(sdOk);
 

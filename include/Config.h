@@ -63,11 +63,21 @@ struct HistoryConfig {
 };
 
 struct LoggingConfig {
+  struct SyslogConfig {
+    bool enabled;
+    String host;
+    uint16_t port;
+    String level;
+    String appName;
+    uint8_t facility; // 0..23 (default: 16 = local0)
+  };
+
   String consoleLevel;
   String sdLevel;
   bool sdEnabled;
   bool rotateDaily;
   uint16_t retentionDays; // 0 = no retention
+  SyslogConfig syslog;
 };
 
 struct SensorConfig {

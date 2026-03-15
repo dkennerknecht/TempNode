@@ -21,6 +21,7 @@ TempNode reads DS18B20 sensors, exposes a REST API, publishes MQTT telemetry, wr
 - MQTT topics for JSON and float-only payload integration.
 - Config migration + runtime-safe config patch endpoints.
 - SD-backed history, metrics, logging, and offline MQTT queue persistence.
+- Optional remote syslog forwarding (UDP, configurable level/facility).
 - OTA with auth, hash validation, and downgrade protection.
 
 ## Contents
@@ -109,7 +110,7 @@ Main config blocks:
 - `rest` (enable/port)
 - `mqtt` (host/port/auth/topics/reconnect/offline queue/health publish)
 - `history` (path/flush/retention)
-- `logging` (separate console + SD levels, rotation, retention)
+- `logging` (separate console/SD/syslog levels, rotation, retention)
 - `metrics`, `watchdog`, `security`, `ota`
 
 Reference:
@@ -142,6 +143,7 @@ Key endpoints:
 | GET | `/history` | History tail (`sensor`, `limit`) |
 | GET/PUT | `/config` | Secure full config read/patch |
 | GET/PUT | `/config/mqtt` | Secure MQTT-only config read/patch |
+| GET/PUT | `/config/logging` | Secure logging + syslog config read/patch |
 | POST | `/ota` | Firmware upload |
 | POST | `/ota/fs` | LittleFS upload |
 
@@ -157,6 +159,13 @@ curl -sS -X PUT \
   -H "Content-Type: application/json" \
   --data '{"intervalMs":20000}' \
   "http://$NODE_IP/api/v1/sensors/interval"
+
+# update logging/syslog config
+curl -sS -X PUT \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"logging":{"consoleLevel":"DEBUG","syslog":{"enabled":true,"host":"192.168.1.50","port":514,"level":"INFO","appName":"tempnode","facility":16}}}' \
+  "http://$NODE_IP/api/v1/config/logging"
 
 # query fallback
 curl -sS -X PUT \

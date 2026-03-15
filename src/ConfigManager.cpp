@@ -171,6 +171,12 @@ static void configToJson(const AppConfig& cfg, JsonDocument& doc) {
   doc["logging"]["sdEnabled"] = cfg.logging.sdEnabled;
   doc["logging"]["rotateDaily"] = cfg.logging.rotateDaily;
   doc["logging"]["retentionDays"] = cfg.logging.retentionDays;
+  doc["logging"]["syslog"]["enabled"] = cfg.logging.syslog.enabled;
+  doc["logging"]["syslog"]["host"] = cfg.logging.syslog.host;
+  doc["logging"]["syslog"]["port"] = cfg.logging.syslog.port;
+  doc["logging"]["syslog"]["level"] = cfg.logging.syslog.level;
+  doc["logging"]["syslog"]["appName"] = cfg.logging.syslog.appName;
+  doc["logging"]["syslog"]["facility"] = cfg.logging.syslog.facility;
 
   doc["metrics"]["enabled"] = cfg.metrics.enabled;
 
@@ -270,6 +276,12 @@ void ConfigManager::applyDefaults() {
   _cfg.mqtt.offlinePersistMaxLines = 1000;
   _cfg.mqtt.publishHealth = true;
   _cfg.mqtt.healthIntervalMs = 15000;
+  _cfg.logging.syslog.enabled = false;
+  _cfg.logging.syslog.host = "";
+  _cfg.logging.syslog.port = 514;
+  _cfg.logging.syslog.level = "INFO";
+  _cfg.logging.syslog.appName = "tempnode";
+  _cfg.logging.syslog.facility = 16; // local0
   syncFeatureFlags();
 }
 
@@ -359,6 +371,12 @@ bool ConfigManager::parseJson(const String& json) {
   _cfg.logging.sdEnabled = doc["logging"]["sdEnabled"] | _cfg.logging.sdEnabled;
   _cfg.logging.rotateDaily = doc["logging"]["rotateDaily"] | _cfg.logging.rotateDaily;
   _cfg.logging.retentionDays = doc["logging"]["retentionDays"] | _cfg.logging.retentionDays;
+  _cfg.logging.syslog.enabled = doc["logging"]["syslog"]["enabled"] | _cfg.logging.syslog.enabled;
+  _cfg.logging.syslog.host = String((const char*)(doc["logging"]["syslog"]["host"] | _cfg.logging.syslog.host.c_str()));
+  _cfg.logging.syslog.port = doc["logging"]["syslog"]["port"] | _cfg.logging.syslog.port;
+  _cfg.logging.syslog.level = String((const char*)(doc["logging"]["syslog"]["level"] | _cfg.logging.syslog.level.c_str()));
+  _cfg.logging.syslog.appName = String((const char*)(doc["logging"]["syslog"]["appName"] | _cfg.logging.syslog.appName.c_str()));
+  _cfg.logging.syslog.facility = doc["logging"]["syslog"]["facility"] | _cfg.logging.syslog.facility;
 
   // Watchdog
   _cfg.watchdog.enabled = doc["watchdog"]["enabled"] | _cfg.watchdog.enabled;
@@ -470,6 +488,31 @@ bool ConfigManager::validate() {
   if (!normalizeLogLevelName(_cfg.logging.sdLevel)) {
     _log->error("config: logging.sdLevel invalid (allowed: DEBUG|INFO|WARN|ERROR)");
     ok = false;
+  }
+
+  if (!normalizeLogLevelName(_cfg.logging.syslog.level)) {
+    _log->error("config: logging.syslog.level invalid (allowed: DEBUG|INFO|WARN|ERROR)");
+    ok = false;
+  }
+
+  _cfg.logging.syslog.host.trim();
+  _cfg.logging.syslog.appName.trim();
+  if (!_cfg.logging.syslog.appName.length()) {
+    _cfg.logging.syslog.appName = "tempnode";
+  }
+  if (_cfg.logging.syslog.facility > 23) {
+    _log->warn("config: logging.syslog.facility out of range, forcing 16 (local0)");
+    _cfg.logging.syslog.facility = 16;
+  }
+  if (_cfg.logging.syslog.enabled) {
+    if (!_cfg.logging.syslog.host.length()) {
+      _log->error("config: logging.syslog.host is required when logging.syslog.enabled=true");
+      ok = false;
+    }
+    if (_cfg.logging.syslog.port == 0) {
+      _log->error("config: logging.syslog.port must be > 0 when logging.syslog.enabled=true");
+      ok = false;
+    }
   }
 
   if (_cfg.history.enabled && !_cfg.history.path.length()) {

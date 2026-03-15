@@ -4,8 +4,10 @@
 #include "StatsManager.h"
 #include "SharedSdMutex.h"
 #include <SD.h>
+#include <WiFi.h>
 
 static constexpr uint32_t kLogRetentionCheckMs = 3600000UL; // hourly
+static constexpr uint32_t kSyslogResolveRetryMs = 5000UL;
 
 static uint16_t dayKeyFromLocal(time_t t) {
   struct tm tm;
@@ -63,6 +65,19 @@ void LogManager::configure(const LoggingConfig& cfg) {
   _sdLogEnabled = cfg.sdEnabled;
   _rotateDaily = cfg.rotateDaily;
   _retentionDays = cfg.retentionDays;
+  _syslogEnabled = cfg.syslog.enabled;
+  _syslogHost = cfg.syslog.host;
+  _syslogHost.trim();
+  _syslogPort = cfg.syslog.port > 0 ? cfg.syslog.port : 514;
+  _syslogMinLevel = parseLevel(cfg.syslog.level, _syslogMinLevel);
+  _syslogAppName = cfg.syslog.appName;
+  _syslogAppName.trim();
+  if (_syslogAppName.isEmpty()) _syslogAppName = "tempnode";
+  _syslogFacility = (cfg.syslog.facility <= 23) ? cfg.syslog.facility : 16;
+  if (!_syslogEnabled) {
+    _syslogUdp.stop();
+  }
+  resetSyslogResolver();
   _currentFile = "";
   _currentDayKey = 0;
 }
@@ -94,15 +109,21 @@ const char* LogManager::levelToStr(LogLevel lvl) const {
 }
 
 void LogManager::log(LogLevel lvl, const String& s) {
+  enqueue(lvl, s, false);
+}
+
+void LogManager::enqueue(LogLevel lvl, const String& s, bool serialAlreadyWritten) {
   if (_paused) return;
-  const bool toSerial = (uint8_t)lvl >= (uint8_t)_consoleMinLevel;
+  const bool toSerial = !serialAlreadyWritten && ((uint8_t)lvl >= (uint8_t)_consoleMinLevel);
   const bool toSd = _sdAvailable && _sdLogEnabled && ((uint8_t)lvl >= (uint8_t)_sdMinLevel);
-  if (!toSerial && !toSd) return;
+  const bool toSyslog = _syslogEnabled && _syslogHost.length() && ((uint8_t)lvl >= (uint8_t)_syslogMinLevel);
+  if (!toSerial && !toSd && !toSyslog) return;
   if (!_queue) return;
 
   LogItem item{};
   item.level = lvl;
   item.createdMs = millis();
+  item.serialAlreadyWritten = serialAlreadyWritten;
   s.substring(0, sizeof(item.msg) - 1).toCharArray(item.msg, sizeof(item.msg));
 
   // Drop-oldest on overflow
@@ -114,6 +135,31 @@ void LogManager::log(LogLevel lvl, const String& s) {
     _drops++;
     // best-effort warning directly to serial (non-blocking)
     Serial.println("[LOG] queue overflow: dropped oldest");
+  }
+}
+
+void LogManager::forwardExternalLine(const char* line, bool serialAlreadyWritten) {
+  if (!line) return;
+
+  String raw(line);
+  raw.replace("\r", "");
+  int start = 0;
+  while (start < (int)raw.length()) {
+    int end = raw.indexOf('\n', start);
+    if (end < 0) end = raw.length();
+    String one = raw.substring(start, end);
+    one.trim();
+    if (one.length()) {
+      LogLevel lvl = LogLevel::INFO;
+      if (one.indexOf(";ERROR;") >= 0) lvl = LogLevel::ERROR;
+      else if (one.indexOf(";WARN;") >= 0) lvl = LogLevel::WARN;
+      else if (one.indexOf(";DEBUG;") >= 0) lvl = LogLevel::DEBUG;
+      else if (one.startsWith("E (")) lvl = LogLevel::ERROR;
+      else if (one.startsWith("W (")) lvl = LogLevel::WARN;
+      else if (one.startsWith("D (") || one.startsWith("V (")) lvl = LogLevel::DEBUG;
+      enqueue(lvl, one, serialAlreadyWritten);
+    }
+    start = end + 1;
   }
 }
 
@@ -146,6 +192,84 @@ bool LogManager::writeLineSd(const char* line) {
 
   xSemaphoreGive(_sdMutex);
   return ok;
+}
+
+void LogManager::resetSyslogResolver() {
+  _syslogIpValid = false;
+  _syslogResolvedIp = IPAddress();
+  _syslogNextResolveMs = 0;
+}
+
+bool LogManager::resolveSyslogHost() {
+  if (!_syslogEnabled) return false;
+  if (_syslogHost.isEmpty()) return false;
+  if (_syslogIpValid) return true;
+
+  const uint32_t now = millis();
+  if ((int32_t)(now - _syslogNextResolveMs) < 0) return false;
+
+  IPAddress ip;
+  if (ip.fromString(_syslogHost)) {
+    _syslogResolvedIp = ip;
+    _syslogIpValid = true;
+    return true;
+  }
+
+  if (WiFi.hostByName(_syslogHost.c_str(), ip)) {
+    _syslogResolvedIp = ip;
+    _syslogIpValid = true;
+    return true;
+  }
+
+  _syslogNextResolveMs = now + kSyslogResolveRetryMs;
+  return false;
+}
+
+bool LogManager::writeLineSyslog(LogLevel lvl, const char* msg, const TimeStamp& ts) {
+  if (!_syslogEnabled) return false;
+  if (_syslogHost.isEmpty()) return false;
+  if (_syslogPort == 0) return false;
+  if (!resolveSyslogHost()) return false;
+
+  uint8_t severity = 6; // INFO
+  switch (lvl) {
+    case LogLevel::DEBUG: severity = 7; break;
+    case LogLevel::INFO:  severity = 6; break;
+    case LogLevel::WARN:  severity = 4; break;
+    case LogLevel::ERROR: severity = 3; break;
+  }
+  const uint16_t pri = (uint16_t)_syslogFacility * 8U + severity;
+
+  char tsBuf[24];
+  if (ts.valid && ts.source == TimeSource::NTP) {
+    static const char* kMon[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                 "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    time_t sec = (time_t)(ts.epochMs / 1000ULL);
+    struct tm t;
+    localtime_r(&sec, &t);
+    const char* mon = (t.tm_mon >= 0 && t.tm_mon < 12) ? kMon[t.tm_mon] : "Jan";
+    snprintf(tsBuf, sizeof(tsBuf), "%s %2d %02d:%02d:%02d",
+             mon, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec);
+  } else {
+    uint64_t s = ts.epochMs / 1000ULL;
+    const uint32_t ss = (uint32_t)(s % 60ULL);
+    const uint32_t mm = (uint32_t)((s / 60ULL) % 60ULL);
+    const uint32_t hh = (uint32_t)((s / 3600ULL) % 24ULL);
+    snprintf(tsBuf, sizeof(tsBuf), "Jan  1 %02u:%02u:%02u", hh, mm, ss);
+  }
+
+  const char* host = WiFi.getHostname();
+  if (!host || !host[0]) host = "tempnode";
+
+  char payload[420];
+  snprintf(payload, sizeof(payload), "<%u>%s %s %s: %s",
+           (unsigned)pri, tsBuf, host, _syslogAppName.c_str(), msg);
+
+  if (!_syslogUdp.beginPacket(_syslogResolvedIp, _syslogPort)) return false;
+  const size_t payloadLen = strlen(payload);
+  const size_t n = _syslogUdp.write((const uint8_t*)payload, payloadLen);
+  if (!_syslogUdp.endPacket()) return false;
+  return n == payloadLen;
 }
 
 void LogManager::rotateIfNeeded() {
@@ -253,7 +377,7 @@ void LogManager::taskMain() {
     char line[512];
     snprintf(line, sizeof(line), "%s;%s;%s", tss.c_str(), levelToStr(item.level), item.msg);
 
-    if ((uint8_t)item.level >= (uint8_t)_consoleMinLevel) {
+    if (!item.serialAlreadyWritten && (uint8_t)item.level >= (uint8_t)_consoleMinLevel) {
       writeLineSerial(line);
     }
 
@@ -261,6 +385,10 @@ void LogManager::taskMain() {
       if (!writeLineSd(line)) {
         _stats->incrementSdWriteFails();
       }
+    }
+
+    if (_syslogEnabled && _syslogHost.length() && (uint8_t)item.level >= (uint8_t)_syslogMinLevel) {
+      (void)writeLineSyslog(item.level, item.msg, ts);
     }
 
     uint32_t now = millis();

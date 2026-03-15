@@ -552,6 +552,74 @@
         }
       }
     },
+    "/api/v1/config/logging": {
+      "get": {
+        "tags": ["config"],
+        "operationId": "getLoggingConfig",
+        "summary": "Get active logging config",
+        "description": "Returns the active logging config section, including syslog settings. This endpoint always requires Bearer token auth and token mode.",
+        "security": [
+          {"bearerAuth": []}
+        ],
+        "responses": {
+          "200": {
+            "description": "Logging config",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/LoggingConfigRedacted"}
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Token mode required"
+          }
+        }
+      },
+      "put": {
+        "tags": ["config"],
+        "operationId": "putLoggingConfig",
+        "summary": "Patch logging config only",
+        "description": "Safely updates only the logging config section, validates, persists to LittleFS, mirrors to SD when /config.json exists, and can reboot when requested and required.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/LoggingConfigPatchRequest"}
+            }
+          }
+        },
+        "security": [
+          {"bearerAuth": []}
+        ],
+        "responses": {
+          "200": {
+            "description": "Logging config update accepted",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ConfigUpdateResponse"}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid patch or validation/persistence failed",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ConfigUpdateResponse"}
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Token mode required"
+          }
+        }
+      }
+    },
     "/api/v1/system": {
       "get": {
         "tags": ["system"],
@@ -1142,6 +1210,64 @@
           "dryRun": {"type": "boolean", "default": false},
           "restart": {"type": "boolean", "default": false},
           "mqtt": {"$ref": "#/components/schemas/MqttConfigPatch"}
+        },
+        "additionalProperties": true
+      },
+      "LoggingSyslogConfig": {
+        "type": "object",
+        "required": ["enabled", "host", "port", "level", "appName", "facility"],
+        "properties": {
+          "enabled": {"type": "boolean"},
+          "host": {"type": "string"},
+          "port": {"type": "integer", "minimum": 1},
+          "level": {"type": "string", "enum": ["DEBUG", "INFO", "WARN", "ERROR"]},
+          "appName": {"type": "string"},
+          "facility": {"type": "integer", "minimum": 0, "maximum": 23}
+        }
+      },
+      "LoggingConfigRedacted": {
+        "type": "object",
+        "required": ["consoleLevel", "sdLevel", "sdEnabled", "rotateDaily", "retentionDays", "syslog"],
+        "properties": {
+          "consoleLevel": {"type": "string", "enum": ["DEBUG", "INFO", "WARN", "ERROR"]},
+          "sdLevel": {"type": "string", "enum": ["DEBUG", "INFO", "WARN", "ERROR"]},
+          "sdEnabled": {"type": "boolean"},
+          "rotateDaily": {"type": "boolean"},
+          "retentionDays": {"type": "integer"},
+          "syslog": {"$ref": "#/components/schemas/LoggingSyslogConfig"}
+        }
+      },
+      "LoggingConfigPatch": {
+        "type": "object",
+        "description": "Partial logging config patch.",
+        "properties": {
+          "consoleLevel": {"type": "string", "enum": ["DEBUG", "INFO", "WARN", "ERROR"]},
+          "sdLevel": {"type": "string", "enum": ["DEBUG", "INFO", "WARN", "ERROR"]},
+          "sdEnabled": {"type": "boolean"},
+          "rotateDaily": {"type": "boolean"},
+          "retentionDays": {"type": "integer"},
+          "syslog": {
+            "type": "object",
+            "properties": {
+              "enabled": {"type": "boolean"},
+              "host": {"type": "string"},
+              "port": {"type": "integer", "minimum": 1},
+              "level": {"type": "string", "enum": ["DEBUG", "INFO", "WARN", "ERROR"]},
+              "appName": {"type": "string"},
+              "facility": {"type": "integer", "minimum": 0, "maximum": 23}
+            },
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
+      },
+      "LoggingConfigPatchRequest": {
+        "type": "object",
+        "description": "Send either logging fields directly at root, or in {\"logging\": {...}}.",
+        "properties": {
+          "dryRun": {"type": "boolean", "default": false},
+          "restart": {"type": "boolean", "default": false},
+          "logging": {"$ref": "#/components/schemas/LoggingConfigPatch"}
         },
         "additionalProperties": true
       },

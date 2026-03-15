@@ -903,6 +903,68 @@ void RestServer::setupRoutes() {
     applyConfigPatch(req, patchDoc.as<JsonVariantConst>(), dryRun, restartRequested);
   }, nullptr, captureBody);
 
+  _srv->on("/api/v1/config/logging", HTTP_GET, [this](AsyncWebServerRequest* req) {
+    if (!tokenAuthStrict(req)) return;
+
+    JsonDocument doc;
+    JsonObject logging = doc.to<JsonObject>();
+    logging["consoleLevel"] = _cfg->logging.consoleLevel;
+    logging["sdLevel"] = _cfg->logging.sdLevel;
+    logging["sdEnabled"] = _cfg->logging.sdEnabled;
+    logging["rotateDaily"] = _cfg->logging.rotateDaily;
+    logging["retentionDays"] = _cfg->logging.retentionDays;
+
+    JsonObject syslog = logging["syslog"].to<JsonObject>();
+    syslog["enabled"] = _cfg->logging.syslog.enabled;
+    syslog["host"] = _cfg->logging.syslog.host;
+    syslog["port"] = _cfg->logging.syslog.port;
+    syslog["level"] = _cfg->logging.syslog.level;
+    syslog["appName"] = _cfg->logging.syslog.appName;
+    syslog["facility"] = _cfg->logging.syslog.facility;
+
+    sendJson(req, doc);
+  });
+
+  _srv->on("/api/v1/config/logging", HTTP_PUT, [this, applyConfigPatch](AsyncWebServerRequest* req) {
+    if (!tokenAuthStrict(req)) return;
+
+    JsonDocument body;
+    String parseErr;
+    if (!this->parseJsonBody(req, body, parseErr)) {
+      JsonDocument errDoc;
+      errDoc["error"] = parseErr;
+      sendJson(req, errDoc, 400);
+      return;
+    }
+
+    const bool dryRun = body["dryRun"] | false;
+    const bool restartRequested = body["restart"] | false;
+
+    JsonDocument patchDoc;
+    JsonObject loggingPatch = patchDoc["logging"].to<JsonObject>();
+
+    auto copyIntoLoggingPatch = [&loggingPatch](JsonObjectConst src, bool skipControlFields) {
+      for (JsonPairConst kv : src) {
+        const String key = kv.key().c_str();
+        if (skipControlFields && (key == "dryRun" || key == "restart" || key == "config")) continue;
+        loggingPatch[key] = kv.value();
+      }
+    };
+
+    if (body["config"]["logging"].is<JsonObjectConst>()) {
+      copyIntoLoggingPatch(body["config"]["logging"].as<JsonObjectConst>(), false);
+    } else if (body["logging"].is<JsonObjectConst>()) {
+      copyIntoLoggingPatch(body["logging"].as<JsonObjectConst>(), false);
+    } else if (body.is<JsonObjectConst>()) {
+      copyIntoLoggingPatch(body.as<JsonObjectConst>(), true);
+    }
+
+    if (loggingPatch.size() == 0) {
+      return sendError(req, 400, "missing logging patch object (use root object, logging, or config.logging)");
+    }
+    applyConfigPatch(req, patchDoc.as<JsonVariantConst>(), dryRun, restartRequested);
+  }, nullptr, captureBody);
+
   _srv->on("/api/v1/system", HTTP_GET, [this](AsyncWebServerRequest* req) {
     if (!authOk(req)) return;
     JsonDocument doc;
@@ -993,7 +1055,7 @@ void RestServer::setupRoutes() {
     } else if (!_cfg->ota.allowInsecureHttp) {
       _log->warn("OTA endpoint disabled: plain HTTP blocked (set ota.allowInsecureHttp=true to allow)");
     } else {
-      _srv->on("/api/v1/ota", HTTP_POST,
+      _srv->on(AsyncURIMatcher::exact("/api/v1/ota"), HTTP_POST,
         [this](AsyncWebServerRequest* req) {
           if (!authOk(req)) return;
           (void)otaFinalize(req, "firmware OTA");
@@ -1051,7 +1113,7 @@ void RestServer::setupRoutes() {
         }
       );
 
-      _srv->on("/api/v1/ota/fs", HTTP_POST,
+      _srv->on(AsyncURIMatcher::exact("/api/v1/ota/fs"), HTTP_POST,
         [this](AsyncWebServerRequest* req) {
           if (!authOk(req)) return;
           (void)otaFinalize(req, "LittleFS OTA");

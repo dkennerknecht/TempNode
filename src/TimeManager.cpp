@@ -1,4 +1,5 @@
 #include "TimeManager.h"
+#include "LogManager.h"
 #include "StatsManager.h"
 #include <time.h>
 
@@ -64,7 +65,8 @@ void TimeManager::loop() {
       snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
                t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
                t.tm_hour, t.tm_min, t.tm_sec);
-      Serial.println(String("NTP sync ok: ") + buf);
+      if (_log) _log->info(String("NTP sync ok: ") + buf);
+      else Serial.println(String("NTP sync ok: ") + buf);
     }
     return;
   }

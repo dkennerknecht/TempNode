@@ -40,7 +40,15 @@
     "sdLevel": "INFO",
     "sdEnabled": true,
     "rotateDaily": true,
-    "retentionDays": 30
+    "retentionDays": 30,
+    "syslog": {
+      "enabled": false,
+      "host": "192.168.1.50",
+      "port": 514,
+      "level": "INFO",
+      "appName": "tempnode",
+      "facility": 16
+    }
   },
   "metrics": {
     "enabled": true
