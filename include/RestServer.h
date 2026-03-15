@@ -3,6 +3,7 @@
 #include <ESPAsyncWebServer.h>
 #include <array>
 #include <mbedtls/sha256.h>
+#include <unordered_map>
 
 class LogManager;
 class TimeManager;
@@ -57,9 +58,11 @@ private:
   std::array<uint8_t, 512> _otaHeaderBuf{};
   std::array<uint8_t, 32> _otaSha256Expected{};
   mbedtls_sha256_context _otaSha256Ctx{};
+  std::unordered_map<const AsyncWebServerRequest*, String> _rawRequestBodies;
 
   bool authOk(AsyncWebServerRequest* req) const;
   bool tokenAuthStrict(AsyncWebServerRequest* req) const;
+  bool parseJsonBody(AsyncWebServerRequest* req, JsonDocument& out, String& err);
   void resetOtaState();
   bool otaPrecheck(AsyncWebServerRequest* req, const String& filename, OtaTarget target);
   bool otaFinalize(AsyncWebServerRequest* req, const char* uploadName);

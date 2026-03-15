@@ -329,17 +329,30 @@ static void sendError(AsyncWebServerRequest* req, int code, const char* msg) {
   sendJson(req, doc, code);
 }
 
-static bool parseJsonBody(AsyncWebServerRequest* req, JsonDocument& out, String& err) {
-  if (!req->hasParam("plain", true)) {
+bool RestServer::parseJsonBody(AsyncWebServerRequest* req, JsonDocument& out, String& err) {
+  String raw;
+
+  // Legacy compatibility path.
+  if (req->hasParam("plain", true)) {
+    const AsyncWebParameter* p = req->getParam("plain", true);
+    if (p) raw = p->value();
+  }
+
+  // Robust path for application/json captured via onRequestBody callback.
+  if (!raw.length()) {
+    auto it = _rawRequestBodies.find(req);
+    if (it != _rawRequestBodies.end()) {
+      raw = it->second;
+      _rawRequestBodies.erase(it);
+    }
+  }
+
+  if (!raw.length()) {
     err = "missing JSON body";
     return false;
   }
-  const AsyncWebParameter* p = req->getParam("plain", true);
-  if (!p) {
-    err = "missing JSON body";
-    return false;
-  }
-  auto de = deserializeJson(out, p->value());
+
+  auto de = deserializeJson(out, raw);
   if (de != DeserializationError::Ok) {
     err = String("invalid JSON: ") + de.c_str();
     return false;
@@ -397,6 +410,21 @@ void RestServer::begin(const AppConfig& cfg,
   if (!cfg.rest.enabled) return;
 
   _srv = new AsyncWebServer(cfg.rest.port);
+
+  // Capture raw request body for handlers that parse JSON after routing.
+  _srv->onRequestBody([this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+    if (!req || total == 0) return;
+
+    String& raw = _rawRequestBodies[req];
+    if (index == 0) {
+      raw = "";
+      if (total < 16384) raw.reserve(total + 1);
+      req->onDisconnect([this, req]() { _rawRequestBodies.erase(req); });
+    }
+
+    if (len > 0) raw.concat(reinterpret_cast<const char*>(data), (unsigned int)len);
+  });
+
   setupRoutes();
   _srv->begin();
   _log->info(String("REST started on port ") + cfg.rest.port);
@@ -646,10 +674,10 @@ void RestServer::setupRoutes() {
     }
 
     // JSON body: {"intervalMs":5000}
-    if (ms == 0 && req->hasParam("plain", true)) {
-      const AsyncWebParameter* p = req->getParam("plain", true);
+    if (ms == 0) {
       JsonDocument body;
-      if (deserializeJson(body, p->value()) == DeserializationError::Ok) {
+      String parseErr;
+      if (this->parseJsonBody(req, body, parseErr)) {
         ms = body["intervalMs"] | 0;
       }
     }
@@ -787,7 +815,7 @@ void RestServer::setupRoutes() {
 
     JsonDocument body;
     String parseErr;
-    if (!parseJsonBody(req, body, parseErr)) {
+    if (!this->parseJsonBody(req, body, parseErr)) {
       JsonDocument errDoc;
       errDoc["error"] = parseErr;
       sendJson(req, errDoc, 400);
@@ -833,7 +861,7 @@ void RestServer::setupRoutes() {
 
     JsonDocument body;
     String parseErr;
-    if (!parseJsonBody(req, body, parseErr)) {
+    if (!this->parseJsonBody(req, body, parseErr)) {
       JsonDocument errDoc;
       errDoc["error"] = parseErr;
       sendJson(req, errDoc, 400);
