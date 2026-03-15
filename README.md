@@ -207,6 +207,62 @@ OTA validation includes:
 - hash headers (`X-OTA-SHA256` recommended, `X-OTA-MD5` supported)
 - version gate (`ota.allowDowngrade=false`)
 
+### OTA with `curl` (Firmware)
+
+```bash
+NODE_IP=<node-ip>
+TOKEN=<rest-token>
+FW=.pio/build/esp32s3/firmware.bin
+
+# build firmware
+pio run -e esp32s3
+
+# compute checksum header
+SHA256=$(shasum -a 256 "$FW" | awk '{print $1}')
+
+# upload firmware
+curl -v --http1.1 \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-OTA-SHA256: $SHA256" \
+  -H "Expect:" \
+  -F "firmware=@$FW;type=application/octet-stream" \
+  "http://$NODE_IP/api/v1/ota"
+```
+
+Expected behavior:
+
+- server responds with `{"status":"ok","reboot":true}`
+- device reboots immediately after OTA finalize
+- `curl` can show `Recv failure: Connection reset by peer` because TCP drops during reboot (this is expected)
+
+Optional post-check:
+
+```bash
+# wait for reboot and verify node is back
+for i in {1..30}; do
+  sleep 2
+  curl -fsS "http://$NODE_IP/api/v1/health" >/dev/null && echo "Node is back" && break
+done
+```
+
+### OTA LittleFS with `curl`
+
+```bash
+NODE_IP=<node-ip>
+TOKEN=<rest-token>
+FS=.pio/build/esp32s3/littlefs.bin
+
+pio run -e esp32s3 -t buildfs
+SHA256_FS=$(shasum -a 256 "$FS" | awk '{print $1}')
+
+curl -v --http1.1 \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-OTA-SHA256: $SHA256_FS" \
+  -H "Expect:" \
+  -F "firmware=@$FS;type=application/octet-stream" \
+  "http://$NODE_IP/api/v1/ota/fs"
+```
+
 Version model:
 
 - local build version: `X.Y.Z.N` (internal 4th segment for monotonic OTA safety)

@@ -88,6 +88,7 @@ bool RestServer::otaPrecheck(AsyncWebServerRequest* req, const String& filename,
   }
 
   size_t contentLen = req->contentLength();
+  const bool multipartUpload = req->multipart();
   if (contentLen == 0) {
     _otaRejectReason = "missing Content-Length";
     return false;
@@ -102,7 +103,7 @@ bool RestServer::otaPrecheck(AsyncWebServerRequest* req, const String& filename,
       _otaRejectReason = "no OTA target partition";
       return false;
     }
-    if (contentLen > targetPart->size) {
+    if (!multipartUpload && contentLen > targetPart->size) {
       _otaRejectReason = "firmware too large for OTA partition";
       return false;
     }
@@ -114,7 +115,7 @@ bool RestServer::otaPrecheck(AsyncWebServerRequest* req, const String& filename,
       _otaRejectReason = "no filesystem partition found for OTA";
       return false;
     }
-    if (contentLen > targetPart->size) {
+    if (!multipartUpload && contentLen > targetPart->size) {
       _otaRejectReason = "filesystem image too large for partition";
       return false;
     }
@@ -153,18 +154,22 @@ bool RestServer::otaPrecheck(AsyncWebServerRequest* req, const String& filename,
     return false;
   }
 
-  _otaExpectedBytes = contentLen;
+  // For multipart uploads, HTTP Content-Length includes MIME boundaries/headers
+  // and is larger than the actual firmware payload. Track expected payload size
+  // from upload callbacks instead.
+  _otaExpectedBytes = 0;
   _otaReceivedBytes = 0;
   _otaHeaderBytes = 0;
   _otaVersionChecked = false;
 
-  if (!Update.begin(contentLen, command, -1, LOW, targetPart->label)) {
+  if (!Update.begin(UPDATE_SIZE_UNKNOWN, command, -1, LOW, targetPart->label)) {
     _otaRejectReason = String("Update.begin failed: ") + Update.errorString();
     return false;
   }
 
   String integrity = _otaSha256ExpectedSet ? "sha256" : (_otaMd5ExpectedSet ? "md5" : "none");
-  _log->warn(String(uploadName) + " precheck ok: target=" + targetPart->label + " size=" + String((unsigned)contentLen) + " hash=" + integrity);
+  _log->warn(String(uploadName) + " precheck ok: target=" + targetPart->label + " contentLength=" + String((unsigned)contentLen) +
+             " multipart=" + (multipartUpload ? "true" : "false") + " hash=" + integrity);
   return true;
 }
 
@@ -173,11 +178,15 @@ bool RestServer::otaFinalize(AsyncWebServerRequest* req, const char* uploadName)
   String err = _otaRejectReason;
 
   if (!_otaRejected && !Update.hasError()) {
-    if (_otaExpectedBytes == 0) {
-      err = String(uploadName) + " precheck not initialized";
-    } else if (_otaReceivedBytes != _otaExpectedBytes) {
-      err = String(uploadName) + " size mismatch: got " + (unsigned)_otaReceivedBytes + ", expected " + (unsigned)_otaExpectedBytes;
+    if (_otaReceivedBytes == 0) {
+      err = String(uploadName) + " empty upload";
+    } else if (_otaExpectedBytes == 0) {
+      err = String(uploadName) + " stream not finalized";
     } else {
+      if (_otaExpectedBytes > 0 && _otaReceivedBytes != _otaExpectedBytes) {
+        err = String(uploadName) + " size mismatch: got " + (unsigned)_otaReceivedBytes + ", expected " + (unsigned)_otaExpectedBytes;
+      }
+
       if (_otaSha256ExpectedSet && _otaSha256Active) {
         uint8_t computed[32] = {0};
         mbedtls_sha256_finish(&_otaSha256Ctx, computed);
@@ -190,7 +199,7 @@ bool RestServer::otaFinalize(AsyncWebServerRequest* req, const char* uploadName)
       }
 
       if (!err.length()) {
-        if (Update.end(false)) {
+        if (Update.end(true)) {
           ok = true;
         } else {
           err = String("Update.end failed: ") + Update.errorString();
@@ -410,9 +419,13 @@ void RestServer::begin(const AppConfig& cfg,
   if (!cfg.rest.enabled) return;
 
   _srv = new AsyncWebServer(cfg.rest.port);
+  setupRoutes();
+  _srv->begin();
+  _log->info(String("REST started on port ") + cfg.rest.port);
+}
 
-  // Capture raw request body for handlers that parse JSON after routing.
-  _srv->onRequestBody([this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+void RestServer::setupRoutes() {
+  auto captureBody = [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
     if (!req || total == 0) return;
 
     String& raw = _rawRequestBodies[req];
@@ -423,14 +436,8 @@ void RestServer::begin(const AppConfig& cfg,
     }
 
     if (len > 0) raw.concat(reinterpret_cast<const char*>(data), (unsigned int)len);
-  });
+  };
 
-  setupRoutes();
-  _srv->begin();
-  _log->info(String("REST started on port ") + cfg.rest.port);
-}
-
-void RestServer::setupRoutes() {
   _srv->on("/api/v1/health", HTTP_GET, [this](AsyncWebServerRequest* req) {
     if (!authOk(req)) return;
 
@@ -719,8 +726,8 @@ void RestServer::setupRoutes() {
     sendJson(req, doc, 200);
   };
 
-  _srv->on("/api/v1/sensors/interval", HTTP_POST, setIntervalHandler);
-  _srv->on("/api/v1/sensors/interval", HTTP_PUT, setIntervalHandler);
+  _srv->on("/api/v1/sensors/interval", HTTP_POST, setIntervalHandler, nullptr, captureBody);
+  _srv->on("/api/v1/sensors/interval", HTTP_PUT, setIntervalHandler, nullptr, captureBody);
 
   auto applyConfigPatch = [this](AsyncWebServerRequest* req,
                                  JsonVariantConst patch,
@@ -828,7 +835,7 @@ void RestServer::setupRoutes() {
                                                                   : body.as<JsonVariantConst>();
     if (!patch.is<JsonObjectConst>()) return sendError(req, 400, "request must be JSON object or contain object field 'config'");
     applyConfigPatch(req, patch, dryRun, restartRequested);
-  });
+  }, nullptr, captureBody);
 
   _srv->on("/api/v1/config/mqtt", HTTP_GET, [this](AsyncWebServerRequest* req) {
     if (!tokenAuthStrict(req)) return;
@@ -894,7 +901,7 @@ void RestServer::setupRoutes() {
       return sendError(req, 400, "missing mqtt patch object (use root object, mqtt, or config.mqtt)");
     }
     applyConfigPatch(req, patchDoc.as<JsonVariantConst>(), dryRun, restartRequested);
-  });
+  }, nullptr, captureBody);
 
   _srv->on("/api/v1/system", HTTP_GET, [this](AsyncWebServerRequest* req) {
     if (!authOk(req)) return;
@@ -1032,7 +1039,10 @@ void RestServer::setupRoutes() {
             _otaReceivedBytes += len;
           }
 
-          if (final && _otaExpectedBytes && _otaReceivedBytes != _otaExpectedBytes) {
+          if (final) {
+            _otaExpectedBytes = index + len;
+          }
+          if (final && _otaExpectedBytes > 0 && _otaReceivedBytes != _otaExpectedBytes) {
             _otaRejected = true;
             _otaRejectReason = String("incomplete upload: got ") + (unsigned)_otaReceivedBytes + ", expected " + (unsigned)_otaExpectedBytes;
             _log->error(_otaRejectReason);
@@ -1080,7 +1090,10 @@ void RestServer::setupRoutes() {
             _otaReceivedBytes += len;
           }
 
-          if (final && _otaExpectedBytes && _otaReceivedBytes != _otaExpectedBytes) {
+          if (final) {
+            _otaExpectedBytes = index + len;
+          }
+          if (final && _otaExpectedBytes > 0 && _otaReceivedBytes != _otaExpectedBytes) {
             _otaRejected = true;
             _otaRejectReason = String("incomplete upload: got ") + (unsigned)_otaReceivedBytes + ", expected " + (unsigned)_otaExpectedBytes;
             _log->error(_otaRejectReason);
