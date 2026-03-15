@@ -1,0 +1,71 @@
+name: Release Firmware
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Resolve release version from tag
+        id: ver
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          APP_VERSION="${TAG#v}"
+          if [ -z "${APP_VERSION}" ] || [ "${APP_VERSION}" = "${TAG}" ]; then
+            echo "Tag must start with 'v' (for example v1.2.10)."
+            exit 1
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "app_version=${APP_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Using app version ${APP_VERSION}"
+
+      - name: Build firmware and LittleFS for release
+        run: |
+          export TEMPNODE_APP_VERSION="${{ steps.ver.outputs.app_version }}"
+          pio run -e esp32s3
+          pio run -e esp32s3 -t buildfs
+
+      - name: Verify route contract
+        run: python3 scripts/contract_test_openapi.py
+
+      - name: Prepare release artifacts
+        run: |
+          mkdir -p release
+          cp .pio/build/esp32s3/firmware.bin "release/TempNode-${{ steps.ver.outputs.app_version }}-firmware.bin"
+          cp .pio/build/esp32s3/littlefs.bin "release/TempNode-${{ steps.ver.outputs.app_version }}-littlefs.bin"
+          cp docs/openapi.json "release/openapi.json"
+          cp docs/asyncapi.yaml "release/asyncapi.yaml"
+          (cd release && sha256sum * > SHA256SUMS.txt)
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: TempNode ${{ steps.ver.outputs.tag }}
+          generate_release_notes: true
+          files: |
+            release/TempNode-${{ steps.ver.outputs.app_version }}-firmware.bin
+            release/TempNode-${{ steps.ver.outputs.app_version }}-littlefs.bin
+            release/SHA256SUMS.txt
+            release/openapi.json
+            release/asyncapi.yaml

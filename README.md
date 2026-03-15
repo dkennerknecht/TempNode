@@ -12,6 +12,7 @@ TempNode reads DS18B20 sensors, exposes REST endpoints, publishes MQTT telemetry
 ## Contents
 
 - [Live API Docs](#live-api-docs)
+- [Releases](#releases)
 - [Hardware](#hardware)
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
@@ -38,6 +39,28 @@ Repository specs:
 
 - [`docs/openapi.json`](docs/openapi.json)
 - [`docs/asyncapi.yaml`](docs/asyncapi.yaml)
+
+## Releases
+
+GitHub Releases are generated from tags via workflow:
+
+- [`.github/workflows/release-firmware.yml`](.github/workflows/release-firmware.yml)
+- Tag format: `v<major>.<minor>.<patch>` (for example `v1.2.10`)
+
+Release assets include:
+
+- `TempNode-<version>-firmware.bin`
+- `TempNode-<version>-littlefs.bin`
+- `SHA256SUMS.txt`
+- `openapi.json`
+- `asyncapi.yaml`
+
+Example:
+
+```bash
+git tag -a v1.2.10 -m "Release v1.2.10"
+git push origin v1.2.10
+```
 
 ## Hardware
 
@@ -280,6 +303,14 @@ Validation includes:
 - partition size fit
 - hash check (`X-OTA-SHA256` recommended, `X-OTA-MD5` supported)
 - version gate (if `ota.allowDowngrade=false`)
+
+Automatic build version:
+
+- Each `pio run` generates a monotonic app version `major.minor.patch` (default `1.2.x`)
+- OTA compares this app version, so same-image reuploads are rejected but newer builds are accepted
+- Current version is visible via `GET /api/v1/system` as `appVersion`
+- `major`/`minor` are configured in [`platformio.ini`](platformio.ini) via `custom_version_major` / `custom_version_minor`
+- Optional CI override: set environment variable `TEMPNODE_APP_VERSION` (for example `1.2.500`)
 
 Build artifacts for OTA testing:
 

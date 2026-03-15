@@ -881,6 +881,8 @@ void RestServer::setupRoutes() {
     doc["chipModel"] = ESP.getChipModel();
     doc["chipRev"] = ESP.getChipRevision();
     doc["sdk"] = ESP.getSdkVersion();
+    const esp_app_desc_t* appDesc = esp_app_get_description();
+    doc["appVersion"] = (appDesc && appDesc->version[0]) ? appDesc->version : "";
     doc["ip"] = _net->ip().toString();
     doc["link"] = _net->linkUp();
     doc["mac"] = _net->macStr();
