@@ -547,7 +547,7 @@ void RestServer::setupRoutes() {
     req->send(200, "application/json", out);
   });
 
-  _srv->on("/api/v1/temp", HTTP_GET, [this](AsyncWebServerRequest* req) {
+  _srv->on(AsyncURIMatcher::exact("/api/v1/temp"), HTTP_GET, [this](AsyncWebServerRequest* req) {
     if (!authOk(req)) return;
     if (!_sensors) return sendError(req, 500, "sensors unavailable");
 
@@ -569,7 +569,7 @@ void RestServer::setupRoutes() {
     sendJson(req, doc);
   });
 
-  _srv->on("/api/v1/temp/float", HTTP_GET, [this](AsyncWebServerRequest* req) {
+  _srv->on(AsyncURIMatcher::exact("/api/v1/temp/float"), HTTP_GET, [this](AsyncWebServerRequest* req) {
     if (!authOk(req)) return;
     if (!_sensors) return sendError(req, 500, "sensors unavailable");
 

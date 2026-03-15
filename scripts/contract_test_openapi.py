@@ -24,11 +24,15 @@ def load_json(path: Path) -> Any:
 
 def extract_routes(rest_cpp: str) -> dict[str, set[str]]:
     routes: dict[str, set[str]] = {}
-    pattern = re.compile(r'_srv->on\("([^"]+)",\s*HTTP_([A-Z]+)')
-    for path, method in pattern.findall(rest_cpp):
-        if not path.startswith("/api/v1/"):
-            continue
-        routes.setdefault(path, set()).add(method.lower())
+    patterns = [
+        re.compile(r'_srv->on\("([^"]+)",\s*HTTP_([A-Z]+)'),
+        re.compile(r'_srv->on\(\s*AsyncURIMatcher::exact\("([^"]+)"\)\s*,\s*HTTP_([A-Z]+)'),
+    ]
+    for pattern in patterns:
+        for path, method in pattern.findall(rest_cpp):
+            if not path.startswith("/api/v1/"):
+                continue
+            routes.setdefault(path, set()).add(method.lower())
     return routes
 
 

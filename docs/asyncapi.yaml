@@ -91,6 +91,23 @@ channels:
       message:
         $ref: "#/components/messages/TemperatureMessage"
 
+  device/{deviceId}/temps_float/{sensorId}:
+    description: Latest value per sensor as plain float payload (retained).
+    parameters:
+      deviceId:
+        description: Configured `mqtt.deviceId` or generated fallback device id.
+        schema:
+          type: string
+      sensorId:
+        description: 1-Wire ROM ID in uppercase hex.
+        schema:
+          type: string
+    subscribe:
+      operationId: receiveTemperatureFloat
+      summary: Receive latest temperature reading as plain float for one sensor.
+      message:
+        $ref: "#/components/messages/TemperatureFloatMessage"
+
 components:
   securitySchemes:
     optionalUserPassword:
@@ -146,6 +163,17 @@ components:
         - $ref: "#/components/messageTraits/retainedQos0"
       payload:
         $ref: "#/components/schemas/TemperaturePayload"
+
+    TemperatureFloatMessage:
+      name: TemperatureFloatMessage
+      messageId: temperatureFloatMessage
+      title: Sensor reading (float)
+      summary: Latest reading for one DS18B20 sensor as plain float payload.
+      contentType: text/plain
+      traits:
+        - $ref: "#/components/messageTraits/retainedQos0"
+      payload:
+        $ref: "#/components/schemas/TemperatureFloatPayload"
 
   schemas:
     StatusPayload:
@@ -223,6 +251,10 @@ components:
           description: 0 = NTP, 1 = UPTIME
         timeValid:
           type: boolean
+
+    TemperatureFloatPayload:
+      type: number
+      description: Plain temperature value in Celsius.
 
     HealthPayload:
       type: object

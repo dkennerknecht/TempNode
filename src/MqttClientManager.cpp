@@ -367,6 +367,10 @@ String MqttClientManager::topicTemps(const String& sensorId) const {
   return _base + "/" + _deviceId + "/temps/" + sensorId;
 }
 
+String MqttClientManager::topicTempsFloat(const String& sensorId) const {
+  return _base + "/" + _deviceId + "/temps_float/" + sensorId;
+}
+
 String MqttClientManager::topicSystem() const {
   return _base + "/" + _deviceId + "/system";
 }
@@ -725,23 +729,36 @@ void MqttClientManager::publishSensor(const SensorReading& r) {
   if (!_cfg) return;
   if (!_cfg->mqtt.enabled) return;
 
-  BufferedMsg m;
-  m.topic = topicTemps(r.id);
-  m.payload = readingToJson(r);
-  m.retain = true;
-  m.qos = 0;
-
-  if (_connected) {
-    _mqtt.publish(m.topic.c_str(), m.qos, m.retain, m.payload.c_str(), m.payload.length());
-  } else {
-    if (_sdQueueEnabled) {
-      // Prefer persistent SD queue for disconnect/reboot survival.
-      if (!appendSdQueuedMessage(m)) {
+  auto publishOrBuffer = [this, &r](const BufferedMsg& m) {
+    if (_connected) {
+      _mqtt.publish(m.topic.c_str(), m.qos, m.retain, m.payload.c_str(), m.payload.length());
+    } else {
+      if (_sdQueueEnabled) {
+        // Prefer persistent SD queue for disconnect/reboot survival.
+        if (!appendSdQueuedMessage(m)) {
+          ringPush(r.id, m);
+        }
+      } else {
         ringPush(r.id, m);
       }
-    } else {
-      ringPush(r.id, m);
     }
+  };
+
+  BufferedMsg jsonMsg;
+  jsonMsg.topic = topicTemps(r.id);
+  jsonMsg.payload = readingToJson(r);
+  jsonMsg.retain = true;
+  jsonMsg.qos = 0;
+  publishOrBuffer(jsonMsg);
+
+  // Additional plain float topic for easy integrations (e.g. Loxone).
+  if (!isnan(r.tempC) && r.status == SensorStatus::OK) {
+    BufferedMsg floatMsg;
+    floatMsg.topic = topicTempsFloat(r.id);
+    floatMsg.payload = String(r.tempC, 4);
+    floatMsg.retain = true;
+    floatMsg.qos = 0;
+    publishOrBuffer(floatMsg);
   }
 }
 

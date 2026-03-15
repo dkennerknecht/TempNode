@@ -15,7 +15,7 @@
   },
   "mqtt": {
     "enabled": true,
-    "host": "192.168.10.117",
+    "host": "192.168.1.119",
     "port": 1883,
     "baseTopic": "device",
     "offlineBufferPerSensor": 20,
@@ -58,7 +58,8 @@
   },
   "security": {
     "enabled": true,
-    "restAuthMode": "anonymous",
-    "allowAnonymousGet": true
+    "restAuthMode": "token",
+    "allowAnonymousGet": false,
+    "restToken": "DEIN_STARKES_TOKEN"
   }
 }

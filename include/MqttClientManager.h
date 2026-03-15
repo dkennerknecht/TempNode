@@ -114,6 +114,7 @@ private:
   void flushSdQueue();
 
   String topicTemps(const String& sensorId) const;
+  String topicTempsFloat(const String& sensorId) const;
   String topicSystem() const;
   String topicHealth() const;
   String topicStatus() const;

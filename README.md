@@ -204,6 +204,7 @@ Optional behavior in token mode:
 Topic base defaults to `device`:
 
 - `device/<deviceId>/temps/<sensorId>`
+- `device/<deviceId>/temps_float/<sensorId>` (plain float payload, no JSON)
 - `device/<deviceId>/system`
 - `device/<deviceId>/health`
 - `device/<deviceId>/status` (LWT retained)
