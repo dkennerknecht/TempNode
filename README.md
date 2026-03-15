@@ -6,68 +6,231 @@
 ![Framework](https://img.shields.io/badge/Framework-Arduino-blue)
 ![Network](https://img.shields.io/badge/Network-W5500%20Ethernet-success)
 ![OTA](https://img.shields.io/badge/OTA-Token%20Gated-critical)
+[![Version](https://img.shields.io/github/v/release/dkennerknecht/TempNode?display_name=tag&sort=semver)](https://github.com/dkennerknecht/TempNode/releases/latest)
+[![Release](https://img.shields.io/github/release-date/dkennerknecht/TempNode)](https://github.com/dkennerknecht/TempNode/releases/latest)
+[![Docs](https://img.shields.io/badge/docs-ReDoc%20%2B%20AsyncAPI-0A7EA4)](https://dkennerknecht.github.io/TempNode/)
+[![API Docs Workflow](https://github.com/dkennerknecht/TempNode/actions/workflows/api-docs-pages.yml/badge.svg)](https://github.com/dkennerknecht/TempNode/actions/workflows/api-docs-pages.yml)
+[![Release Workflow](https://github.com/dkennerknecht/TempNode/actions/workflows/release-firmware.yml/badge.svg)](https://github.com/dkennerknecht/TempNode/actions/workflows/release-firmware.yml)
 
-TempNode reads DS18B20 sensors, exposes REST endpoints, publishes MQTT telemetry, writes history/logs to SD, and supports guarded OTA updates.
+TempNode reads DS18B20 sensors, exposes a REST API, publishes MQTT telemetry, writes history/logs to SD, and supports guarded firmware and LittleFS OTA updates.
+
+## Highlights
+
+- Ethernet-first runtime for stable, low-latency telemetry.
+- REST API with OpenAPI contract and generated ReDoc site.
+- MQTT topics for JSON and float-only payload integration.
+- Config migration + runtime-safe config patch endpoints.
+- SD-backed history, metrics, logging, and offline MQTT queue persistence.
+- OTA with auth, hash validation, and downgrade protection.
 
 ## Contents
 
-- [Live API Docs](#live-api-docs)
-- [Releases](#releases)
-- [Versioning](#versioning)
-- [Hardware](#hardware)
+- [Documentation](#documentation)
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
 - [REST API](#rest-api)
 - [MQTT API](#mqtt-api)
-- [OTA Update](#ota-update)
-- [Persistence and Logging](#persistence-and-logging)
+- [OTA Versioning and Releases](#ota-versioning-and-releases)
+- [Hardware](#hardware)
 - [Development](#development)
+- [Repository Layout](#repository-layout)
 - [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
+- [License](#license)
 
-## Live API Docs
+## Documentation
 
-GitHub Pages publishes both API documentations:
+Published docs (GitHub Pages):
 
-- REST (ReDoc): [dkennerknecht.github.io/TempNode](https://dkennerknecht.github.io/TempNode/)
-- MQTT (AsyncAPI HTML): [dkennerknecht.github.io/TempNode/mqtt](https://dkennerknecht.github.io/TempNode/mqtt/)
+- REST API (ReDoc): [dkennerknecht.github.io/TempNode](https://dkennerknecht.github.io/TempNode/)
+- MQTT API (AsyncAPI HTML): [dkennerknecht.github.io/TempNode/mqtt](https://dkennerknecht.github.io/TempNode/mqtt/)
 
 Published specs:
 
 - OpenAPI JSON: [openapi.json](https://dkennerknecht.github.io/TempNode/openapi.json)
 - AsyncAPI YAML: [asyncapi.yaml](https://dkennerknecht.github.io/TempNode/asyncapi.yaml)
 
-Repository specs:
+Repository docs:
 
 - [`docs/openapi.json`](docs/openapi.json)
 - [`docs/asyncapi.yaml`](docs/asyncapi.yaml)
+- [`VERSIONING.md`](VERSIONING.md)
+- [`SMOKETEST.md`](SMOKETEST.md)
 
-## Releases
+## Quick Start
 
-GitHub Releases are generated from tags via workflow:
+### 1. Prerequisites
 
-- [`.github/workflows/release-firmware.yml`](.github/workflows/release-firmware.yml)
-- Tag format: `v<major>.<minor>.<patch>` (for example `v1.2.10`)
+- PlatformIO Core (`pio`)
+- USB connection to board
+- Optional SD card (FAT32)
+- Optional MQTT broker
 
-Release assets include:
-
-- `TempNode-<version>-firmware.bin`
-- `TempNode-<version>-littlefs.bin`
-- `SHA256SUMS.txt`
-- `openapi.json`
-- `asyncapi.yaml`
-
-Example:
+### 2. Configure Device
 
 ```bash
-git tag -a v1.2.10 -m "Release v1.2.10"
-git push origin v1.2.10
+cp config.example.json data/config.json
 ```
 
-## Versioning
+### 3. Build and Flash
 
-For the complete team workflow (local build versions vs. GitHub release tags), see:
+```bash
+pio run -e esp32s3 -t upload -t uploadfs -t monitor
+```
 
-- [`VERSIONING.md`](VERSIONING.md)
+This uploads firmware + LittleFS (`data/`), then opens the serial monitor.
+
+### 4. Verify
+
+```bash
+NODE_IP=<your-node-ip>
+curl -sS "http://$NODE_IP/api/v1/health"
+curl -sS "http://$NODE_IP/api/v1/system"
+```
+
+## Configuration
+
+Runtime config path is `/config.json`.
+
+Load order:
+
+1. LittleFS `/config.json` (from `data/config.json` + `uploadfs`)
+2. SD `/config.json` (optional override)
+
+Schema and migration:
+
+- `configVersion` (`2` = current)
+- older configs are auto-migrated and written back
+
+Main config blocks:
+
+- `network` (DHCP/static IP, hostname)
+- `sensors` (interval, DS18B20 resolution/timeout)
+- `rest` (enable/port)
+- `mqtt` (host/port/auth/topics/reconnect/offline queue/health publish)
+- `history` (path/flush/retention)
+- `logging` (separate console + SD levels, rotation, retention)
+- `metrics`, `watchdog`, `security`, `ota`
+
+Reference:
+
+- [`config.example.json`](config.example.json)
+
+## REST API
+
+Base URL:
+
+- `http://<NODE_IP>/api/v1`
+
+Auth behavior (via `security.restAuthMode`):
+
+- `anonymous`: no auth required
+- `token`: Bearer token required
+- optional in token mode: `security.allowAnonymousGet=true` for unauthenticated `GET`
+
+Key endpoints:
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/health` | Detailed subsystem health (`network`, `mqtt`, `sd`, `time`, `ota_state`) |
+| GET | `/temps` | Latest reading per discovered sensor |
+| GET | `/temp?sensorId=<id>` | Full JSON for one sensor |
+| GET | `/temp/float?sensorId=<id>` | Float-only response (`text/plain`) |
+| GET/POST/PUT | `/sensors/interval` | Read/set polling interval with persistence |
+| GET | `/system` | Runtime and build diagnostics |
+| GET | `/metrics` | Runtime + persisted counters |
+| GET | `/history` | History tail (`sensor`, `limit`) |
+| GET/PUT | `/config` | Secure full config read/patch |
+| GET/PUT | `/config/mqtt` | Secure MQTT-only config read/patch |
+| POST | `/ota` | Firmware upload |
+| POST | `/ota/fs` | LittleFS upload |
+
+Example requests:
+
+```bash
+# float-only value for Loxone-like integrations
+curl -sS "http://$NODE_IP/api/v1/temp/float?sensorId=28701749000000D8"
+
+# set interval via JSON body
+curl -sS -X PUT \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"intervalMs":20000}' \
+  "http://$NODE_IP/api/v1/sensors/interval"
+
+# query fallback
+curl -sS -X PUT \
+  -H "Authorization: Bearer $TOKEN" \
+  "http://$NODE_IP/api/v1/sensors/interval?intervalMs=20000"
+```
+
+## MQTT API
+
+Default topic base: `device`.
+
+| Topic | Payload |
+|---|---|
+| `device/<deviceId>/temps/<sensorId>` | JSON sensor reading |
+| `device/<deviceId>/temps_float/<sensorId>` | float-only payload |
+| `device/<deviceId>/system` | runtime snapshot |
+| `device/<deviceId>/health` | health metrics |
+| `device/<deviceId>/status` | LWT retained (`online`/`offline`) |
+
+Behavior notes:
+
+- MQTT auth uses `mqtt.user` + `mqtt.pass`; if both empty, anonymous login is used.
+- `deviceId` is sanitized (invalid chars replaced with `_`).
+- default short `deviceId` format if empty: `esp32s3_003CFD`.
+- optional SD-backed offline queue:
+  - `mqtt.offlinePersistSdEnabled`
+  - `mqtt.offlinePersistPath`
+  - `mqtt.offlinePersistMaxLines`
+- health publish controls:
+  - `mqtt.publishHealth`
+  - `mqtt.healthIntervalMs`
+
+## OTA Versioning and Releases
+
+OTA endpoint activation requirements:
+
+- `ota.enabled=true`
+- `ota.allowInsecureHttp=true`
+- `security.restAuthMode="token"`
+- `security.restToken` set
+
+OTA validation includes:
+
+- Bearer token
+- image name `.bin`
+- `Content-Length`
+- partition-size fit
+- hash headers (`X-OTA-SHA256` recommended, `X-OTA-MD5` supported)
+- version gate (`ota.allowDowngrade=false`)
+
+Version model:
+
+- local build version: `X.Y.Z.N` (internal 4th segment for monotonic OTA safety)
+- release tag version: `vX.Y.Z`
+- release base configured in `platformio.ini` via `custom_release_version`
+- version details: [`VERSIONING.md`](VERSIONING.md)
+
+GitHub Releases:
+
+- workflow: [`.github/workflows/release-firmware.yml`](.github/workflows/release-firmware.yml)
+- trigger: push tag `vX.Y.Z`
+- assets:
+  - `TempNode-<version>-firmware.bin`
+  - `TempNode-<version>-littlefs.bin`
+  - `SHA256SUMS.txt`
+  - `openapi.json`
+  - `asyncapi.yaml`
+
+Release example:
+
+```bash
+git tag -a v1.2.2 -m "Release v1.2.2"
+git push origin v1.2.2
+```
 
 ## Hardware
 
@@ -99,308 +262,87 @@ For the complete team workflow (local build versions vs. GitHub release tags), s
 
 ![Waveshare ESP32-S3-ETH board](ESP32-S3-ETH.jpg)
 
-## Quick Start
-
-### 1. Prerequisites
-
-- PlatformIO Core (`pio`)
-- USB connection to board
-- Optional: SD card (FAT32)
-- Optional: MQTT broker
-
-### 2. Configure Device
-
-Copy and adjust config for filesystem upload:
-
-```bash
-cp config.example.json data/config.json
-```
-
-### 3. Build
-
-```bash
-pio run -e esp32s3
-```
-
-### 4. Flash Firmware + LittleFS + Monitor
-
-```bash
-pio run -e esp32s3 -t upload -t uploadfs -t monitor
-```
-
-This command uploads:
-
-- Firmware image
-- `data/` as LittleFS image (including `data/config.json`)
-- Serial monitor
-
-### 5. Verify
-
-- Watch serial log for `ETH got IP: ...`
-- Open `http://<node-ip>/api/v1/health`
-
-## Configuration
-
-Runtime config path is `/config.json`.
-
-Config schema version:
-
-- Top-level `configVersion` is used for migration (`2` = current)
-- Older configs are auto-migrated on boot and written back to storage
-
-Load order:
-
-1. LittleFS `/config.json` (from `data/config.json` + `uploadfs`)
-2. SD `/config.json` (optional override)
-
-Main config blocks:
-
-- `network`: hostname, DHCP/static IP fields
-- `sensors`: interval, DS18B20 resolution, conversion timeout
-- `rest`: enable + port
-- `mqtt`: host/port/auth/topic/reconnect/offline buffering/health publishing
-- `history`: path, flush interval, retention days
-- `logging`: separate `consoleLevel` and `sdLevel`, rotation, retention
-- `metrics`: enable `/api/v1/metrics`
-- `watchdog`: task watchdog behavior
-- `security`: REST auth mode + token policy
-- `ota`: OTA gating and validation
-
-Reference file:
-
-- [`config.example.json`](config.example.json)
-
-## REST API
-
-Base URL:
-
-- `http://<NODE_IP>/api/v1`
-
-REST auth is controlled by `security.restAuthMode`:
-
-- `anonymous`: no auth required
-- `token`: Bearer token required
-
-Optional behavior in token mode:
-
-- `security.allowAnonymousGet=true` allows unauthenticated `GET` requests
-- non-GET requests still require `Authorization: Bearer <token>`
-- legacy `security.enabled` is still accepted; `restAuthMode` is preferred
-
-`/api/v1/config` is always strict:
-
-- requires `restAuthMode="token"` and valid Bearer token
-- supports `PUT` patch with `dryRun` and `restart` flags
-- includes dedicated MQTT section endpoints: `GET/PUT /api/v1/config/mqtt`
-
-### Key Endpoints
-
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/health` | Detailed status with subsystem checks |
-| GET | `/temps` | Latest reading for all discovered sensors |
-| GET | `/temp?sensorId=<id>` | Latest reading for one specific sensor |
-| GET | `/temp/float?sensorId=<id>` | Latest reading for one sensor as plain float (`text/plain`) |
-| GET | `/sensors` | Sensor summary and interval |
-| GET/POST/PUT | `/sensors/interval` | Read/set sensor interval (persisted to LittleFS, mirrored to SD when `/config.json` exists) |
-| GET | `/system` | Runtime diagnostics |
-| GET | `/metrics` | Runtime + persisted counters |
-| GET | `/history` | Tail history (`sensor`, `limit`) |
-| GET/PUT | `/config` | Secure config read/patch (`dryRun`, optional restart) |
-| GET/PUT | `/config/mqtt` | Secure MQTT-only config read/patch |
-| POST | `/ota` | OTA upload endpoint (if enabled) |
-
-### `/health` details
-
-`checks.sd` includes:
-
-- `sdMountFails`
-- `sdWriteFails`
-- `diskSizeBytes`
-- `diskUsedBytes`
-- `diskFreeBytes`
-- `usagePercent`
-
-`checks.mqtt` includes diagnostics such as:
-
-- `host`, `port`, `user`
-- `connectAttempts`
-- DNS resolve result/IP
-- ping result/latency
-- TCP probe result
-
-## MQTT API
-
-Topic base defaults to `device`:
-
-- `device/<deviceId>/temps/<sensorId>`
-- `device/<deviceId>/temps_float/<sensorId>` (plain float payload, no JSON)
-- `device/<deviceId>/system`
-- `device/<deviceId>/health`
-- `device/<deviceId>/status` (LWT retained)
-
-Auth behavior:
-
-- If `mqtt.user` and `mqtt.pass` are set: username/password login
-- If both are empty: anonymous login
-- Legacy fallback from `security.mqttUser` / `security.mqttPass` is still supported
-- `deviceId` used in MQTT topics is sanitized at runtime (no spaces/`:`; invalid chars become `_`)
-- If `mqtt.deviceId` is empty, a short default like `esp32s3_003CFD` is generated
-
-Health metrics publishing:
-
-- `mqtt.publishHealth` enables/disables health topic publishing
-- `mqtt.healthIntervalMs` controls publish interval
-
-Persistent offline queue on SD:
-
-- `mqtt.offlinePersistSdEnabled`
-- `mqtt.offlinePersistPath` (for example `/mqtt_offline.jsonl`)
-- `mqtt.offlinePersistMaxLines`
-- When enabled, disconnected sensor messages are persisted on SD and flushed after reconnect
-
-REST config update (token mode):
-
-- Read current MQTT config: `GET /api/v1/config/mqtt`
-- Patch MQTT config only: `PUT /api/v1/config/mqtt`
-- Request body can be either direct MQTT fields or wrapped in `{"mqtt": {...}}`
-
-Example:
-
-```bash
-curl -X PUT "http://<NODE_IP>/api/v1/config/mqtt" \
-  -H "Authorization: Bearer <TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "dryRun": false,
-    "restart": true,
-    "mqtt": {
-      "host": "192.168.1.119",
-      "port": 1883,
-      "user": "",
-      "pass": "",
-      "baseTopic": "device"
-    }
-  }'
-```
-
-Contract reference:
-
-- [`docs/asyncapi.yaml`](docs/asyncapi.yaml)
-
-## OTA Update
-
-OTA endpoint is active only when all conditions are met:
-
-- `ota.enabled=true`
-- `ota.allowInsecureHttp=true`
-- `security.restAuthMode="token"`
-- `security.restToken` is set
-
-Available endpoints:
-
-- `POST /api/v1/ota` for firmware image uploads
-- `POST /api/v1/ota/fs` for LittleFS image uploads
-
-Validation includes:
-
-- Bearer token check
-- `.bin` filename
-- `Content-Length`
-- partition size fit
-- hash check (`X-OTA-SHA256` recommended, `X-OTA-MD5` supported)
-- version gate (if `ota.allowDowngrade=false`)
-
-Automatic build version:
-
-- Each local `pio run` generates a monotonic app version `X.Y.Z.N` (4th segment is internal build counter)
-- OTA compares this app version, so same-image reuploads are rejected but newer builds are accepted
-- Current version is visible via `GET /api/v1/system` as `appVersion`
-- GitHub releases keep semantic tags `vX.Y.Z` (without internal 4th segment)
-- Local base release version is configured in [`platformio.ini`](platformio.ini) via `custom_release_version`
-- Keep `custom_release_version` aligned with your current/next release line to avoid local OTA downgrade conflicts
-- Internal local build counter is stored in `.tempnode_local_build` (local only, not committed)
-- Optional CI override: set environment variable `TEMPNODE_APP_VERSION` (for example `1.2.500`)
-
-Build artifacts for OTA testing:
-
-- Firmware image: `.pio/build/esp32s3/firmware.bin` (`pio run -e esp32s3`)
-- LittleFS image: `.pio/build/esp32s3/littlefs.bin` (`pio run -e esp32s3 -t buildfs`)
-
-## Persistence and Logging
-
-Typical SD files:
-
-- `/config.json` (optional override)
-- `/history.jsonl`
-- `/stats.json`
-- `/log-YYYYMMDD.log` (daily rotation) or `/log.log`
-
-History retention:
-
-- `history.flushIntervalMs`
-- `history.retentionDays`
-
-Logging retention:
-
-- `logging.consoleLevel` and `logging.sdLevel` can differ
-- `logging.sdEnabled`
-- `logging.rotateDaily`
-- `logging.retentionDays`
-
 ## Development
 
-### Common Commands
+Common commands:
 
 ```bash
-# Build
+# build
 pio run -e esp32s3
 
-# Flash firmware + LittleFS
+# flash firmware + littlefs
 pio run -e esp32s3 -t upload -t uploadfs
 
-# Monitor
+# monitor
 pio device monitor
 
-# OpenAPI contract test
+# native unit tests
+pio test -e native
+
+# OpenAPI route contract check
 python3 scripts/contract_test_openapi.py
 
-# Build local static docs (ReDoc + AsyncAPI HTML)
+# build docs locally (ReDoc + AsyncAPI HTML)
 ./scripts/build_api_docs.sh
 ```
 
-### Key Files
+Quality gates used in repo:
 
-- [`src/main.cpp`](src/main.cpp) - boot sequence and runtime wiring
-- [`src/RestServer.cpp`](src/RestServer.cpp) - REST routes + OTA handler
-- [`src/MqttClientManager.cpp`](src/MqttClientManager.cpp) - MQTT connect/reconnect/publish
-- [`src/ConfigManager.cpp`](src/ConfigManager.cpp) - config loading + validation
-- [`scripts/build_api_docs.sh`](scripts/build_api_docs.sh) - API docs generation
-- [`.github/workflows/api-docs-pages.yml`](.github/workflows/api-docs-pages.yml) - GitHub Pages pipeline
+- OpenAPI route contract test (`scripts/contract_test_openapi.py`)
+- GitHub Pages doc generation (`api-docs-pages.yml`)
+- Tag-based release build + assets (`release-firmware.yml`)
+
+## Repository Layout
+
+- [`src/main.cpp`](src/main.cpp): boot sequence + runtime wiring
+- [`src/RestServer.cpp`](src/RestServer.cpp): REST routes + OTA handling
+- [`src/MqttClientManager.cpp`](src/MqttClientManager.cpp): MQTT lifecycle + publishing
+- [`src/ConfigManager.cpp`](src/ConfigManager.cpp): load/validate/migrate/persist config
+- [`src/HistoryManager.cpp`](src/HistoryManager.cpp): history flush + retention
+- [`docs/openapi.json`](docs/openapi.json): REST contract
+- [`docs/asyncapi.yaml`](docs/asyncapi.yaml): MQTT contract
 
 ## Troubleshooting
 
-### MQTT connects to old/wrong host
+### MQTT connects to wrong host
 
-Most common reason: runtime config on LittleFS/SD still has old values.
+Most common reason is stale runtime config in LittleFS/SD.
 
-1. Update `data/config.json`
-2. Re-upload LittleFS: `pio run -e esp32s3 -t uploadfs`
-3. Reboot and re-check `/api/v1/health` -> `checks.mqtt.host`
+```bash
+# update data/config.json, then re-upload filesystem
+pio run -e esp32s3 -t uploadfs
+```
 
-### Build fails with missing library headers
+Verify with `GET /api/v1/health` at `checks.mqtt.host`.
 
-Run clean build and ensure dependencies are installed:
+### `/api/v1/sensors/interval` says `missing intervalMs`
+
+Use one of these supported forms:
+
+- query/form: `intervalMs=...`
+- JSON body: `{"intervalMs":20000}` with `Content-Type: application/json`
+
+### `/health` is `degraded`
+
+Inspect `checks.network`, `checks.mqtt`, `checks.sd`, `checks.time`, `checks.ota_state` to identify the failing subsystem.
+
+### Build issues with dependencies
 
 ```bash
 pio run -t clean
 pio run -e esp32s3
 ```
 
-### `/health` returns `degraded`
+## Contributing
 
-Check fields in `checks.*` (network, mqtt, sd, time, ota_state). The response is intentionally detailed to show the failing subsystem.
+Issues and pull requests are welcome.
 
----
+For hardware validation before merge, use:
 
-No license file is currently included. Add a `LICENSE` file before public distribution.
+- [`SMOKETEST.md`](SMOKETEST.md)
+
+## License
+
+This project is licensed under **GNU General Public License v3.0**.
+
+- Full text: [`LICENSE`](LICENSE)

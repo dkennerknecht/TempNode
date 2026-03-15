@@ -7,7 +7,8 @@ info:
     MQTT topic contract for TempNode telemetry and health publishing.
     The node publishes retained messages below `device/<deviceId>/...`.
   license:
-    name: UNLICENSED
+    name: GNU General Public License v3.0
+    url: https://www.gnu.org/licenses/gpl-3.0.en.html
   contact:
     name: TempNode Maintainers
     url: https://github.com/dkennerknecht/TempNode

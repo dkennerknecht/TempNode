@@ -14,7 +14,7 @@
       "name": "TempNode Contributors"
     }
   ],
-  "license": "UNLICENSED",
+  "license": "GPL-3.0-only",
   "frameworks": "*",
   "platforms": "*",
   "build": {
