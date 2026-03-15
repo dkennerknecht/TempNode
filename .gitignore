@@ -5,5 +5,6 @@ config.json
 !data/config.json
 data/config.json.bak
 .tempnode_build_patch
+.tempnode_local_build
 __pycache__/
 *.pyc

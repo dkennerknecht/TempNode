@@ -1,0 +1,24 @@
+{
+  "name": "tempnode_core",
+  "version": "0.1.0",
+  "description": "Platform-agnostic core helpers for TempNode.",
+  "keywords": [
+    "tempnode",
+    "core",
+    "ota",
+    "history",
+    "utility"
+  ],
+  "authors": [
+    {
+      "name": "TempNode Contributors"
+    }
+  ],
+  "license": "UNLICENSED",
+  "frameworks": "*",
+  "platforms": "*",
+  "build": {
+    "includeDir": "include",
+    "srcDir": "src"
+  }
+}

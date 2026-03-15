@@ -13,6 +13,7 @@ TempNode reads DS18B20 sensors, exposes REST endpoints, publishes MQTT telemetry
 
 - [Live API Docs](#live-api-docs)
 - [Releases](#releases)
+- [Versioning](#versioning)
 - [Hardware](#hardware)
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
@@ -61,6 +62,12 @@ Example:
 git tag -a v1.2.10 -m "Release v1.2.10"
 git push origin v1.2.10
 ```
+
+## Versioning
+
+For the complete team workflow (local build versions vs. GitHub release tags), see:
+
+- [`VERSIONING.md`](VERSIONING.md)
 
 ## Hardware
 
@@ -306,10 +313,13 @@ Validation includes:
 
 Automatic build version:
 
-- Each `pio run` generates a monotonic app version `major.minor.patch` (default `1.2.x`)
+- Each local `pio run` generates a monotonic app version `X.Y.Z.N` (4th segment is internal build counter)
 - OTA compares this app version, so same-image reuploads are rejected but newer builds are accepted
 - Current version is visible via `GET /api/v1/system` as `appVersion`
-- `major`/`minor` are configured in [`platformio.ini`](platformio.ini) via `custom_version_major` / `custom_version_minor`
+- GitHub releases keep semantic tags `vX.Y.Z` (without internal 4th segment)
+- Local base release version is configured in [`platformio.ini`](platformio.ini) via `custom_release_version`
+- Keep `custom_release_version` aligned with your current/next release line to avoid local OTA downgrade conflicts
+- Internal local build counter is stored in `.tempnode_local_build` (local only, not committed)
 - Optional CI override: set environment variable `TEMPNODE_APP_VERSION` (for example `1.2.500`)
 
 Build artifacts for OTA testing:
