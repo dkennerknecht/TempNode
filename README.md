@@ -316,7 +316,7 @@ git push origin v1.2.2
 
 ### Board Reference
 
-![Waveshare ESP32-S3-ETH board](ESP32-S3-ETH.jpg)
+![Waveshare ESP32-S3-ETH board](docs/ESP32-S3-ETH.jpg)
 
 ## Development
 
