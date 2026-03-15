@@ -8,3 +8,4 @@ data/config.json.bak
 .tempnode_local_build
 __pycache__/
 *.pyc
+.DS_Store
